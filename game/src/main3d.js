@@ -1,49 +1,92 @@
-// VICE BAY 3D — entry point, game loop, third-person camera, player movement.
-// STAGE 1: playable core — a procedural humanoid walking in a 3D dusk coastal
-// city with a smooth third-person camera, collision, jump/run, title + pause,
-// a minimal HUD and a minimap. Written fresh for the 3D build.
-import * as THREE from '../vendor/three/three.module.min.js';
-import { buildCity, resolveCollision, ROADS } from './city.js';
-import { buildCityDetails } from './citydetails.js';
-import { makeHumanoid, poseHumanoid } from './actors.js';
-import { makeCharacter, poseCharacter } from './character.js';
-import { createVehicles } from './vehicles.js';
-import { createPolice } from './police.js';
-import { createNPCs } from './npcs.js';
-import { createCombat } from './combat.js';
-import { createDamageFX } from './damage.js';
-import { createLandmarks } from './neon.js';
-import { createInput, ACT_JUMP, ACT_PUNCH, ACT_WEAPON, ACT_PAUSE, ACT_CONFIRM, clamp, lerp, lerpAngle, angleDiff } from './util.js';
+// VICE BAY — the game. A 3D third-person open-world core: a shaped
+// character walking a seeded dusk coastal city, a smooth chase camera,
+// building collision, a live HUD (minimap, money, stars, dispatch, mission,
+// location, clock, radio), title / pause / save / load, and staged
+// screenshots for the dossier. Desktop Chrome, keyboard + mouse, offline.
 
-const params = new URLSearchParams(location.search);
-const SHOT = params.get('shot') || null;
-const SEED = parseInt(params.get('seed') || '1', 10);
+import * as THREE from 'three';
+import { buildCity, districtAt, LAYOUT } from './city.js';
+import { makeCharacter } from './character.js';
+import { clamp, lerp, lerpAngle, pushOutOfBox } from './util.js';
 
-const canvas = document.getElementById('gl');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+// ---------------------------------------------------------------- constants
+
+const WALK_SPEED = 5; // m/s
+const RUN_SPEED = 9; // m/s
+const GRAVITY = 20; // m/s^2
+const JUMP_VELOCITY = 7.7; // m/s — about a 1.5 m apex
+const PLAYER_RADIUS = 0.45;
+const WORLD_BOUND = 238;
+const SAVE_KEY = 'vicebay-save-v1';
+const START_MONEY = 250;
+const START_TIME_MINUTES = 18 * 60 + 42; // 18:42, golden hour
+
+// ---------------------------------------------------------------- state
+
+let mode = 'title'; // 'title' | 'playing' | 'paused'
+let money = START_MONEY;
+let health = 100;
+let wanted = 0;
+let muted = false;
+let gameMinutes = START_TIME_MINUTES;
+let frameCount = 0;
+let walkPhase = 0;
+let shotName = null;
+let shotReady = false;
+
+const player = {
+  x: 0,
+  z: 24,
+  y: 0,
+  vy: 0,
+  vx: 0,
+  vz: 0,
+  yaw: Math.PI,
+  onGround: true,
+  speed: 0,
+};
+
+const cam = {
+  yaw: 0,
+  pitch: 0.35, // 0 = level, 1 = high
+  dist: 6.5,
+  height: 2.6,
+};
+
+const keys = Object.create(null);
+const oneShot = { jump: false };
+
+// ---------------------------------------------------------------- renderer / scene
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.18;
+document.getElementById('game-canvas').appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0x3a2438, 130, 620);
+scene.fog = new THREE.Fog(0x6a4a7a, 120, 750);
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2000);
 
-// --- Dusk / golden-hour sky (a big gradient dome) ---
+// Dusk sky: a gradient dome (purple overhead, magenta, orange at the horizon).
 {
-  const c = document.createElement('canvas'); c.width = 4; c.height = 256;
-  const g = c.getContext('2d');
-  const grad = g.createLinearGradient(0, 0, 0, 256);
-  grad.addColorStop(0.0, '#1c1030');   // zenith: deep purple
-  grad.addColorStop(0.45, '#5a2a4a');  // mid: dusky magenta
-  grad.addColorStop(0.72, '#c65a2e');  // low: burnt orange
-  grad.addColorStop(0.85, '#ffb060');  // horizon: golden
-  grad.addColorStop(1.0, '#3a2438');   // below horizon
-  g.fillStyle = grad; g.fillRect(0, 0, 4, 256);
+  const c = document.createElement('canvas');
+  c.width = 4;
+  c.height = 256;
+  const ctx = c.getContext('2d');
+  const grad = ctx.createLinearGradient(0, 0, 0, 256);
+  grad.addColorStop(0, '#1a1038');
+  grad.addColorStop(0.35, '#4a2560');
+  grad.addColorStop(0.62, '#8a3a6a');
+  grad.addColorStop(0.8, '#e86a3c');
+  grad.addColorStop(0.92, '#ffb060');
+  grad.addColorStop(1, '#3a2a4a');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 4, 256);
   const skyTex = new THREE.CanvasTexture(c);
   skyTex.colorSpace = THREE.SRGBColorSpace;
   const sky = new THREE.Mesh(
@@ -53,486 +96,549 @@ const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerH
   scene.add(sky);
 }
 
-// --- Dusk lighting: low warm sun + purple hemisphere + faint ambient ---
-const sun = new THREE.DirectionalLight(0xffb060, 2.4);
+// Golden-hour sun, low over the sea (east), so the beach glows.
+const sun = new THREE.DirectionalLight(0xffb060, 2.2);
+sun.position.set(300, 70, -60);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
-sun.shadow.camera.left = -95; sun.shadow.camera.right = 95;
-sun.shadow.camera.top = 95; sun.shadow.camera.bottom = -95;
-sun.shadow.camera.near = 10; sun.shadow.camera.far = 520;
-sun.shadow.bias = -0.0006;
-scene.add(sun); scene.add(sun.target);
-const hemi = new THREE.HemisphereLight(0x8a5a8a, 0x2a2018, 1.15);
-scene.add(hemi);
-scene.add(new THREE.AmbientLight(0x403050, 0.8));
-const SUN_DIR = new THREE.Vector3(-0.82, 0.42, 0.38).normalize();
+sun.shadow.camera.left = -260;
+sun.shadow.camera.right = 260;
+sun.shadow.camera.top = 260;
+sun.shadow.camera.bottom = -260;
+sun.shadow.camera.far = 900;
+sun.shadow.bias = -0.0005;
+scene.add(sun);
+scene.add(new THREE.HemisphereLight(0x8a5a9a, 0x5a4a3a, 1.15));
+scene.add(new THREE.AmbientLight(0x604a6a, 0.8));
 
-// --- City ---
-const city = buildCity(scene, 1337 + SEED * 0); // seed is fixed: the city is the same every run
-const cityDetails = buildCityDetails(scene, city);
+// ---------------------------------------------------------------- world
 
-// --- Vehicles (drivable cars, traffic, chase-cam) ---
-const vehicles = createVehicles(scene, city);
+const city = buildCity(1);
+scene.add(city.group);
+const colliders = city.colliders;
 
-// --- Police (wanted level, pursuit cars, helicopter) + NPCs ---
-const police = createPolice(scene, city, vehicles);
-const npcs = createNPCs(scene, city);
+const character = makeCharacter();
+scene.add(character.group);
 
-// --- Player ---
-const playerMesh = makeCharacter({ shirt: 0xc0392b, pants: 0x2c3e50, skin: 0xc9976b, scale: 1 });
-scene.add(playerMesh.group);
-const player = {
-  x: city.playerStart.x, z: city.playerStart.z, y: 0, vy: 0,
-  heading: city.playerStart.heading, onGround: true,
-  health: 100, money: 250, speed: 0, walkPhase: 0,
-  camYaw: city.playerStart.heading, camPitch: 0.3,
-};
-playerMesh.group.position.set(player.x, 0, player.z);
-playerMesh.group.rotation.y = player.heading;
+// ---------------------------------------------------------------- HUD elements
 
-// --- Combat (punch + weapons) + damage FX + landmarks (neon, ferris wheel) ---
-const combat = createCombat(scene, player, playerMesh, npcs, police);
-const damageFX = createDamageFX(scene);
-const landmarks = createLandmarks(scene, city);
-
-// --- Input ---
-const input = createInput(canvas);
-
-// --- Game state ---
-let mode = 'title'; // 'title' | 'playing' | 'paused'
-let shake = 0;
-let frames = 0;
-let shotReadyAt = 0;
-
-// --- HUD elements ---
 const $ = (id) => document.getElementById(id);
-const hud = $('hud'), titleEl = $('title'), pauseEl = $('pause');
-const healthfill = $('healthfill'), moneyEl = $('money'), starsEl = $('stars');
-const mnameEl = $('mname'), mobjEl = $('mobj'), mtimerEl = $('mtimer');
-const speedvalEl = $('speedval'), vehiclenameEl = $('vehiclename'), carcondEl = $('carcond');
-const carrowEl = $('carrow'), carhpEl = $('carhp');
-const locnameEl = $('locname'), clockEl = $('clock'), radioEl = $('radio');
-const bannerEl = $('banner'), arrowEl = $('arrow');
-const minimap = $('minimap'), mctx = minimap.getContext('2d');
-const dispatchUnitsEl = $('dispatchunits'), dialogueLineEl = $('dialogueline');
-const statusEl = $('status');
+const hud = {
+  money: $('hud-money'),
+  stars: $('hud-stars'),
+  healthFill: $('hud-health-fill'),
+  healthNum: $('hud-health-num'),
+  dispatch: $('hud-dispatch-body'),
+  missionTitle: $('hud-mission-title'),
+  missionText: $('hud-mission-text'),
+  dialogueName: $('hud-dialogue-name'),
+  dialogueText: $('hud-dialogue-text'),
+  location: $('hud-location'),
+  clock: $('hud-clock'),
+  radio: $('hud-radio'),
+  speed: $('hud-speed'),
+  minimap: $('hud-minimap'),
+  title: $('title-screen'),
+  pause: $('pause-menu'),
+  toast: $('hud-toast'),
+  muted: $('hud-muted'),
+};
+const minimapCtx = hud.minimap.getContext('2d');
 
-function setBanner(text, sub) {
-  bannerEl.innerHTML = text + (sub ? `<span class="sub">${sub}</span>` : '');
-  bannerEl.style.opacity = '1';
-  clearTimeout(setBanner._t);
-  setBanner._t = setTimeout(() => { bannerEl.style.opacity = '0'; }, 2600);
-}
+// ---------------------------------------------------------------- input
 
-function districtName(x, z) {
-  if (z > 175) return 'SUNSET STRAND';
-  if (x < -112) return 'HARBOUR DOCKS';
-  if (Math.abs(x) < 56 && Math.abs(z) < 56) return 'DOWNTOWN';
-  if (x > 112) return 'CORAL ROW';
-  if (z > 112) return 'PALM BEACH';
-  if (z < -112) return 'HILLS';
-  return 'VICE BAY';
-}
-
-function drawMinimap() {
-  const S = 180, W = 480;
-  const px = (v) => ((v + W / 2) / W) * S;
-  mctx.fillStyle = '#10141a'; mctx.fillRect(0, 0, S, S);
-  // Sea + beach.
-  mctx.fillStyle = '#1b5f7a'; mctx.fillRect(0, px(210), S, S - px(210));
-  mctx.fillStyle = '#d9c48f'; mctx.fillRect(0, px(180), S, px(210) - px(180));
-  // Roads.
-  mctx.fillStyle = '#3a3d44';
-  for (const r of ROADS) {
-    mctx.fillRect(px(r - 6), 0, px(12) - px(0), S);
-    mctx.fillRect(0, px(r - 6), S, px(12) - px(0));
+window.addEventListener('keydown', (e) => {
+  if (e.repeat) return;
+  keys[e.code] = true;
+  if (e.code === 'Space') {
+    oneShot.jump = true;
+    e.preventDefault();
   }
-  // Buildings.
-  mctx.fillStyle = '#8d929c';
-  for (const b of city.buildings) {
-    mctx.fillRect(px(b.x - b.w / 2), px(b.z - b.d / 2), px(b.w) - px(0), px(b.d) - px(0));
-  }
-  // Vehicle blips: parked cars (grey), traffic (blue), the player's car (gold).
-  for (const v of vehicles.list) {
-    const vx = px(v.x), vz = px(v.z);
-    mctx.fillStyle = v === vehicles.playerCar ? '#ffd60a' : (v.isPolice ? '#ff4040' : (v.isTraffic ? '#7ec8ff' : '#e8e8e8'));
-    mctx.fillRect(vx - 2, vz - 2, 4, 4);
-  }
-  // Helicopter blip (white) + pedestrian blips (pale dots).
-  if (police.heli) {
-    mctx.fillStyle = '#ffffff';
-    mctx.fillRect(px(police.heli.x) - 2, px(police.heli.z) - 2, 4, 4);
-  }
-  mctx.fillStyle = '#d8d8d8';
-  for (const n of npcs.list) {
-    mctx.fillRect(px(n.x) - 1, px(n.z) - 1, 2, 2);
-  }
-  // Player arrow. On the canvas +x is right and +z is down; the player faces
-  // (sin h, cos h) in (x,z), so rotate the up-pointing triangle by PI - h.
-  const cx = px(player.x), cz = px(player.z);
-  mctx.save();
-  mctx.translate(cx, cz);
-  mctx.rotate(Math.PI - player.heading);
-  mctx.fillStyle = '#ffd60a';
-  mctx.beginPath();
-  mctx.moveTo(0, -7); mctx.lineTo(5, 6); mctx.lineTo(0, 3); mctx.lineTo(-5, 6); mctx.closePath();
-  mctx.fill();
-  mctx.restore();
-}
-
-function updateHUD() {
-  healthfill.style.width = `${clamp(player.health, 0, 100)}%`;
-  moneyEl.textContent = `$${player.money.toLocaleString('en-US')}`;
-  const w = police.wanted;
-  starsEl.textContent = '★'.repeat(w) + '☆'.repeat(5 - w);
-  mnameEl.textContent = 'VICE BAY — FREE ROAM';
-  mobjEl.textContent = 'Steal a car, outrun the VBPD. Missions arrive in Stage 4.';
-  mtimerEl.textContent = '';
-  locnameEl.textContent = districtName(player.x, player.z);
-  clockEl.textContent = '18:42';
-  radioEl.textContent = 'VICE FM 98.5 — Sunset Drive';
-  vehiclenameEl.textContent = vehicles.playerCar ? vehicles.playerCar.displayName : 'ON FOOT';
-  carcondEl.textContent = vehicles.playerCar ? `CONDITION ${vehicles.playerCar.condition}% · ${vehicles.playerCar.typeLabel}` : '';
-  if (vehicles.playerCar) {
-    carrowEl.style.display = 'flex';
-    carhpEl.textContent = `CAR ${vehicles.playerCar.condition}%`;
-    carhpEl.style.color = vehicles.playerCar.condition < 45 ? '#ff6b6b' : '';
-  } else {
-    carrowEl.style.display = 'none';
-  }
-  speedvalEl.textContent = String(Math.round(player.speed * 3.6));
-  // Weapon slots: the equipped weapon is active; FISTS/BAT/PISTOL are owned,
-  // SMG stays locked.
-  const slots = [$('wslot0'), $('wslot1'), $('wslot2'), $('wslot3')];
-  slots.forEach((s, i) => {
-    if (!s) return;
-    s.classList.toggle('active', i === combat.weaponIndex);
-    s.classList.toggle('locked', i === 3);
-  });
-  // Dispatch board: named units + roles + live distances, or standby.
-  const units = police.units(player);
-  if (units.length === 0) {
-    dispatchUnitsEl.innerHTML = '<div class="unit"><span>VBPD — STANDBY</span><span class="dist">NO ACTIVE UNITS</span></div>';
-  } else {
-    dispatchUnitsEl.innerHTML = units.map((u) =>
-      `<div class="unit"><span>${u.name} — <span class="role">${u.role}</span></span><span class="dist">${u.dist} m</span></div>`
-    ).join('');
-  }
-  // Rico warns the player the first time the heat is on.
-  if (w >= 3 && !updateHUD._warned) {
-    updateHUD._warned = true;
-    dialogueLineEl.textContent = 'The cops are all over you, Jax. Lose them — fast.';
-  } else if (w === 0 && updateHUD._warned) {
-    updateHUD._warned = false;
-    dialogueLineEl.textContent = 'Welcome to Vice Bay, Jax. Keep your head down and your wheels turning.';
-  }
-  drawMinimap();
-}
-
-// --- Camera rig (third-person, smooth follow) ---
-const camPos = new THREE.Vector3();
-const camTarget = new THREE.Vector3();
-let camInit = false;
-function updateCamera(dt, orbitMode) {
-  const look = input.takeLook();
-  player.camYaw -= look.dx * 0.005;
-  player.camPitch = clamp(player.camPitch + look.dy * 0.003, 0.06, 0.75);
-  if (vehicles.playerCar) {
-    // Driving: cinematic chase-cam behind the car (handled by the vehicle system).
-    // Lift the camera when the helicopter is up so it stays in frame.
-    vehicles.driveCamera(camera, dt, look, police.heliActive() ? 1 : 0);
-    if (shake > 0.001) {
-      camera.position.x += (Math.random() - 0.5) * shake;
-      camera.position.y += (Math.random() - 0.5) * shake;
-      shake *= Math.exp(-6 * dt);
-    }
-    return;
-  }
-  if (SHOT === 'city') {
-    // Wide establishing shot: high above the north edge, looking south across
-    // downtown toward the beach and the sea.
-    camera.position.set(0, 95, -185);
-    camera.lookAt(0, 8, 60);
-    return;
-  }
-  if (orbitMode) {
-    // Title: slow orbit around the player at a low height.
-    const t = performance.now() * 0.00008;
-    const r = 26, h = 11;
-    camPos.set(
-      player.x + Math.sin(t) * r,
-      h,
-      player.z + Math.cos(t) * r
-    );
-    camTarget.set(player.x, 2.2, player.z);
-    camera.position.lerp(camPos, 1 - Math.exp(-2 * dt));
-    camera.lookAt(camTarget);
-    return;
-  }
-  const dist = 7.2;
-  const cp = Math.cos(player.camPitch), sp = Math.sin(player.camPitch);
-  const fx = Math.sin(player.camYaw), fz = Math.cos(player.camYaw);
-  const desired = new THREE.Vector3(
-    player.x - fx * cp * dist,
-    1.7 + sp * dist + 0.6,
-    player.z - fz * cp * dist
-  );
-  // Keep the camera above the ground.
-  desired.y = Math.max(desired.y, 1.2);
-  if (!camInit) { camera.position.copy(desired); camInit = true; }
-  camera.position.lerp(desired, 1 - Math.exp(-11 * dt));
-  const lookAhead = 2.2;
-  camTarget.set(
-    player.x + fx * lookAhead,
-    1.7 + player.y * 0.5,
-    player.z + fz * lookAhead
-  );
-  if (shake > 0.001) {
-    camera.position.x += (Math.random() - 0.5) * shake;
-    camera.position.y += (Math.random() - 0.5) * shake;
-    shake *= Math.exp(-6 * dt);
-  }
-  camera.lookAt(camTarget);
-}
-
-// --- Player movement (on foot). `actions` is passed in by the loop (the loop
-// is the only place that consumes the one-shot action flags).
-function updatePlayer(dt, actions) {
-  const axes = input.moveAxes();
-  const fx = Math.sin(player.camYaw), fz = Math.cos(player.camYaw);
-  const rx = -fz, rz = fx; // right = (-fz, fx)
-  let mx = fx * axes.f + rx * axes.s;
-  let mz = fz * axes.f + rz * axes.s;
-  const ml = Math.hypot(mx, mz);
-  if (ml > 0.01) { mx /= ml; mz /= ml; }
-  const targetSpeed = ml > 0.01 ? (input.run ? 9 : 5) : 0;
-  player.speed += clamp(targetSpeed - player.speed, -34 * dt, 26 * dt);
-  if (ml > 0.01) {
-    const targetHeading = Math.atan2(mx, mz);
-    player.heading = lerpAngle(player.heading, targetHeading, 1 - Math.exp(-12 * dt));
-    player.x += mx * player.speed * dt;
-    player.z += mz * player.speed * dt;
-  }
-  // Jump / gravity.
-  if ((actions & ACT_JUMP) && player.onGround) { player.vy = 8.5; player.onGround = false; }
-  if (!player.onGround || player.y > 0) {
-    player.vy -= 24 * dt;
-    player.y += player.vy * dt;
-    if (player.y <= 0) { player.y = 0; player.vy = 0; player.onGround = true; }
-  }
-  // Collision + bounds.
-  const res = resolveCollision(city.colliders, player.x, player.z, 0.55);
-  player.x = res.x; player.z = res.z;
-  player.x = clamp(player.x, -235, 235);
-  player.z = clamp(player.z, -235, 206);
-  // Pose + mesh (walk/run animation, jump tuck, walk bob, punch swing).
-  player.walkPhase += player.speed * dt * 1.7;
-  const amp = clamp(player.speed / 9, 0, 1) * (input.run ? 0.95 : 0.6);
-  poseCharacter(playerMesh, player.walkPhase, amp, combat.punchT, clamp(player.speed / 9, 0, 1) * 0.14, player.onGround ? 0 : 1);
-  playerMesh.group.position.set(player.x, player.y + playerMesh.bob, player.z);
-  playerMesh.group.rotation.y = player.heading;
-}
-
-// --- Shot staging (deterministic, for screenshots) ---
-function stageShot(name) {
-  if (name === 'onfoot') {
-    // Third-person view on a street: player on Coral Row facing downtown.
-    player.x = 84; player.z = 28; player.heading = Math.PI * 0.5; player.camYaw = Math.PI * 0.5; player.camPitch = 0.3;
-  } else if (name === 'city') {
-    // Wide city view: player on a rooftop-height overlook is not possible on foot,
-    // so place the camera high via a wide orbit — handled in the render by a flag.
-    player.x = 0; player.z = -140; player.heading = Math.PI; player.camYaw = Math.PI; player.camPitch = 0.55;
-  } else if (name === 'beach') {
-    // Dusk beach: player on the sand facing the sea (south), with an
-    // umbrella and the lifeguard stand in frame and the ferris wheel's neon
-    // rim at the right edge.
-    player.x = 24; player.z = 184; player.heading = 0; player.camYaw = 0; player.camPitch = 0.28;
-  } else if (name === 'drive') {
-    // Chase-cam: the player is IN the hero car, driving east on Coral Row,
-    // with traffic ahead. The car is moving (live speed) when the shot lands.
-    const car = vehicles.hero;
-    player.x = car.x - 3; player.z = car.z;
-    vehicles.enterCar(car, player, playerMesh);
-    car.speed = 20;
-    player.camYaw = car.heading; player.camPitch = 0.22;
-  } else if (name === 'chase') {
-    // Cinematic police chase: the player is IN the hero car, driving south
-    // on the central road toward the beach, with the VBPD in pursuit — two
-    // police cars ahead/behind, the helicopter overhead with its spotlight,
-    // traffic ahead, pedestrians on the sidewalks, and the ferris wheel dead
-    // ahead in the distance.
-    const car = vehicles.hero;
-    vehicles.enterCar(car, player, playerMesh);
-    car.x = 0; car.z = 100; car.heading = 0; car.speed = 22;
-    car.group.position.set(0, 0, 100);
-    car.group.rotation.y = 0;
-    player.camYaw = car.heading; player.camPitch = 0.22;
-    police.stageChase();
-    // Traffic ahead on the road (the traffic update re-places the meshes
-    // from v.x/v.z each frame, so only the state needs staging). The van is
-    // moved off the chase road so it cannot block the police cars.
-    const traffic = vehicles.list.filter((v) => v.isTraffic);
-    const taxi = traffic.find((v) => v.type === 'taxi');
-    if (taxi) { taxi.x = -3; taxi.z = 168; taxi.heading = 0; taxi.speed = 11; }
-    const sedan = traffic.find((v) => v.type === 'sedan');
-    if (sedan) { sedan.x = 4; sedan.z = 182; sedan.heading = 0; sedan.speed = 10; }
-    const van = traffic.find((v) => v.type === 'van');
-    if (van) { van.x = -56; van.z = 120; van.heading = 0; van.speed = 9; }
-    // Pedestrians on the sidewalks.
-    npcs.place(0, 8, 112, Math.PI);
-    npcs.place(1, -8, 130, 0);
-  }
-  playerMesh.group.position.set(player.x, player.y, player.z);
-  playerMesh.group.rotation.y = player.heading;
-  mode = 'playing';
-  hud.classList.remove('hidden');
-  titleEl.classList.add('hidden');
-  pauseEl.classList.add('hidden');
-  camInit = false;
-  updateHUD();
-  shotReadyAt = performance.now() + 1800;
-}
-
-// --- Menus ---
-function startGame() {
-  mode = 'playing';
-  titleEl.classList.add('hidden');
-  pauseEl.classList.add('hidden');
-  hud.classList.remove('hidden');
-  camInit = false;
-  setBanner('VICE BAY', 'Welcome to the city, Jax.');
-  statusEl.textContent = 'VICE BAY 3D — playing';
-}
-function pauseGame() {
-  if (mode !== 'playing') return;
-  mode = 'paused';
-  pauseEl.classList.remove('hidden');
-}
-function resumeGame() {
-  if (mode !== 'paused') return;
-  mode = 'playing';
-  pauseEl.classList.add('hidden');
-}
-function restartGame() {
-  vehicles.reset(player, playerMesh);
-  police.reset();
-  npcs.reset();
-  combat.reset();
-  player.x = city.playerStart.x; player.z = city.playerStart.z; player.y = 0; player.vy = 0;
-  player.heading = city.playerStart.heading; player.camYaw = player.heading;
-  player.health = 100; player.money = 250; player.speed = 0;
-  playerMesh.group.position.set(player.x, 0, player.z);
-  playerMesh.group.rotation.y = player.heading;
-  playerMesh.group.visible = true;
-  camInit = false;
-  resumeGame();
-  setBanner('VICE BAY', 'Back on the streets.');
-}
-function saveGame() {
-  try {
-    localStorage.setItem('vicebay3d-save-v1', JSON.stringify({
-      x: player.x, z: player.z, heading: player.heading, health: player.health, money: player.money,
-    }));
-    setBanner('SAVED', 'Progress saved.');
-  } catch (e) { setBanner('SAVE FAILED', 'Storage unavailable.'); }
-}
-function loadGame() {
-  try {
-    const raw = localStorage.getItem('vicebay3d-save-v1');
-    if (!raw) { setBanner('NO SAVE', 'No saved game found.'); return false; }
-    const d = JSON.parse(raw);
-    if (vehicles.playerCar) vehicles.exitCar(player, playerMesh);
-    player.x = d.x; player.z = d.z; player.heading = d.heading || 0; player.camYaw = player.heading;
-    player.health = d.health ?? 100; player.money = d.money ?? 0;
-    playerMesh.group.position.set(player.x, 0, player.z);
-    playerMesh.group.rotation.y = player.heading;
-    camInit = false;
-    return true;
-  } catch (e) { return false; }
-}
-
-$('startbtn').addEventListener('click', startGame);
-$('loadbtn').addEventListener('click', () => { if (loadGame()) startGame(); else setBanner('NO SAVE', 'No saved game found.'); });
-$('resumebtn').addEventListener('click', resumeGame);
-$('restartbtn').addEventListener('click', restartGame);
-$('savebtn').addEventListener('click', saveGame);
-$('loadbtn2').addEventListener('click', () => { if (loadGame()) { resumeGame(); setBanner('LOADED', 'Save loaded.'); } });
-$('mutebtn').addEventListener('click', () => { setBanner('MUTE', 'Sound arrives in a later stage.'); });
-$('quitbtn').addEventListener('click', () => { mode = 'title'; pauseEl.classList.add('hidden'); titleEl.classList.remove('hidden'); hud.classList.add('hidden'); });
-$('besthaul').textContent = 'Best haul: $0 — finish a job to set a record.';
-
-// --- Main loop ---
-let lastNow = performance.now();
-function animate() {
-  requestAnimationFrame(animate);
-  const now = performance.now();
-  const dt = Math.min((now - lastNow) / 1000, 0.05);
-  lastNow = now;
-  frames++;
-  const actions = input.takeActions();
-  if (actions & ACT_PAUSE) {
+  if (e.code === 'KeyP' || e.code === 'Escape') {
     if (mode === 'playing') pauseGame();
     else if (mode === 'paused') resumeGame();
   }
-  if ((actions & ACT_CONFIRM) && mode === 'title') startGame();
-  if (mode === 'playing') {
-    // Vehicles own the E key and the driving state; on foot the player walks.
-    const wasDriving = !!vehicles.playerCar;
-    const driving = vehicles.update(dt, actions, input, player, playerMesh);
-    if (!driving) updatePlayer(dt, actions);
-    // Stealing a parked car is a crime (not when a shot is staged).
-    if (driving && !wasDriving && !SHOT) police.addWanted(1);
-    const ev = police.update(dt, player, vehicles);
-    if (ev.rammed) shake = 0.6;
-    npcs.update(dt, player, vehicles, police);
-    combat.update(dt, actions, player, playerMesh, vehicles);
-    damageFX.update(dt, vehicles);
-    landmarks.update(dt);
-    // Wasted: the player wakes up at the Hospital, heat cleared.
-    if (player.health <= 0) {
-      if (vehicles.playerCar) vehicles.exitCar(player, playerMesh);
-      police.reset();
-      player.x = city.landmarks.hospital.x; player.z = city.landmarks.hospital.z;
-      player.y = 0; player.vy = 0; player.health = 100; player.speed = 0;
-      player.heading = 0; player.camYaw = 0;
-      playerMesh.group.position.set(player.x, 0, player.z);
-      playerMesh.group.rotation.y = 0;
-      playerMesh.group.visible = true;
-      camInit = false;
-      setBanner('WASTED', 'You woke up at the Hospital.');
-    }
-    updateHUD();
+  if (e.code === 'Enter' && mode === 'title') startGame();
+  if (e.code === 'KeyM') {
+    muted = !muted;
+    showToast(muted ? 'Sound muted' : 'Sound on');
+    updateMuted();
   }
-  // Sun follows the player so shadows stay crisp nearby.
-  sun.position.set(player.x + SUN_DIR.x * 190, SUN_DIR.y * 190, player.z + SUN_DIR.z * 190);
-  sun.target.position.set(player.x, 0, player.z);
-  sun.target.updateMatrixWorld();
-  city.update(dt);
-  cityDetails.update(dt);
-  updateCamera(dt, mode === 'title');
-  renderer.render(scene, camera);
-  if (frames === 3) window.__gameReady = true;
-  if (SHOT && shotReadyAt && performance.now() >= shotReadyAt) {
-    window.__shotReady = true;
-    shotReadyAt = 0;
-  }
-}
+});
+window.addEventListener('keyup', (e) => {
+  keys[e.code] = false;
+});
+
+// Mouse drag orbits the camera (no pointer lock: it must work headless too).
+let dragging = false;
+let lastMouse = { x: 0, y: 0 };
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  dragging = true;
+  lastMouse = { x: e.clientX, y: e.clientY };
+});
+window.addEventListener('pointermove', (e) => {
+  if (!dragging) return;
+  const dx = e.clientX - lastMouse.x;
+  const dy = e.clientY - lastMouse.y;
+  lastMouse = { x: e.clientX, y: e.clientY };
+  cam.yaw -= dx * 0.005;
+  cam.pitch = clamp(cam.pitch + dy * 0.003, 0, 1);
+  cam.height = 2.2 + cam.pitch * 3.2;
+});
+window.addEventListener('pointerup', () => {
+  dragging = false;
+});
 
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
-window.addEventListener('error', (e) => { window.__lastError = String(e.message || e.error); });
 
-// Debug handle for automated tests (read-only state).
-window.__vb = { player, city, vehicles, police, npcs, combat, damageFX, get mode() { return mode; }, get frames() { return frames; }, get driving() { return !!vehicles.playerCar; } };
+// ---------------------------------------------------------------- game flow
 
-// --- Boot ---
-if (SHOT) {
-  stageShot(SHOT);
-} else {
-  updateHUD();
-  dialogueLineEl.textContent = 'Welcome to Vice Bay, Jax. Keep your head down and your wheels turning.';
+function startGame() {
+  mode = 'playing';
+  hud.title.classList.add('hidden');
+  hud.pause.classList.add('hidden');
+  showToast('Welcome to Vice Bay');
 }
-animate();
+
+function pauseGame() {
+  mode = 'paused';
+  hud.pause.classList.remove('hidden');
+}
+
+function resumeGame() {
+  mode = 'playing';
+  hud.pause.classList.add('hidden');
+}
+
+function restartGame() {
+  player.x = 0;
+  player.z = 24;
+  player.y = 0;
+  player.vy = 0;
+  player.vx = 0;
+  player.vz = 0;
+  player.yaw = Math.PI;
+  money = START_MONEY;
+  health = 100;
+  wanted = 0;
+  gameMinutes = START_TIME_MINUTES;
+  cam.yaw = 0;
+  cam.pitch = 0.35;
+  resumeGame();
+  showToast('Back at the start');
+}
+
+let toastTimer = 0;
+function showToast(text) {
+  hud.toast.textContent = text;
+  hud.toast.classList.remove('hidden');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => hud.toast.classList.add('hidden'), 2600);
+}
+
+function updateMuted() {
+  hud.muted.classList.toggle('hidden', !muted);
+}
+
+// ---------------------------------------------------------------- save / load
+
+function saveGame() {
+  try {
+    localStorage.setItem(
+      SAVE_KEY,
+      JSON.stringify({ x: player.x, z: player.z, yaw: player.yaw, money, minutes: gameMinutes })
+    );
+    showToast('Game saved');
+  } catch {
+    showToast('Save failed (storage unavailable)');
+  }
+}
+
+function loadGame() {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) {
+      showToast('No save found');
+      return false;
+    }
+    const s = JSON.parse(raw);
+    player.x = s.x;
+    player.z = s.z;
+    player.yaw = s.yaw;
+    money = s.money;
+    gameMinutes = s.minutes;
+    player.vx = 0;
+    player.vz = 0;
+    showToast('Save loaded');
+    return true;
+  } catch {
+    showToast('Load failed');
+    return false;
+  }
+}
+
+function hasSave() {
+  try {
+    return localStorage.getItem(SAVE_KEY) !== null;
+  } catch {
+    return false;
+  }
+}
+
+// Buttons (title + pause menus).
+$('btn-start').addEventListener('click', startGame);
+$('btn-continue').addEventListener('click', () => {
+  if (loadGame()) startGame();
+});
+$('btn-resume').addEventListener('click', resumeGame);
+$('btn-save').addEventListener('click', saveGame);
+$('btn-load').addEventListener('click', loadGame);
+$('btn-restart').addEventListener('click', restartGame);
+$('btn-mute').addEventListener('click', () => {
+  muted = !muted;
+  updateMuted();
+  showToast(muted ? 'Sound muted' : 'Sound on');
+});
+$('btn-quit').addEventListener('click', () => {
+  mode = 'title';
+  hud.pause.classList.add('hidden');
+  hud.title.classList.remove('hidden');
+  updateContinueButton();
+});
+updateContinueButton();
+updateMuted();
+
+function updateContinueButton() {
+  $('btn-continue').classList.toggle('hidden', !hasSave());
+}
+
+// ---------------------------------------------------------------- player update
+
+function updatePlayer(dt) {
+  // Camera-relative movement.
+  const fwdX = -Math.sin(cam.yaw);
+  const fwdZ = -Math.cos(cam.yaw);
+  const rightX = Math.cos(cam.yaw);
+  const rightZ = -Math.sin(cam.yaw);
+  let mx = 0;
+  let mz = 0;
+  if (keys['KeyW'] || keys['ArrowUp']) {
+    mx += fwdX;
+    mz += fwdZ;
+  }
+  if (keys['KeyS'] || keys['ArrowDown']) {
+    mx -= fwdX;
+    mz -= fwdZ;
+  }
+  if (keys['KeyD'] || keys['ArrowRight']) {
+    mx += rightX;
+    mz += rightZ;
+  }
+  if (keys['KeyA'] || keys['ArrowLeft']) {
+    mx -= rightX;
+    mz -= rightZ;
+  }
+  const len = Math.hypot(mx, mz);
+  const running = !!(keys['ShiftLeft'] || keys['ShiftRight']);
+  const targetSpeed = len > 0 ? (running ? RUN_SPEED : WALK_SPEED) : 0;
+  if (len > 0) {
+    mx /= len;
+    mz /= len;
+    const wantYaw = Math.atan2(mx, mz);
+    player.yaw = lerpAngle(player.yaw, wantYaw, 1 - Math.exp(-12 * dt));
+  }
+  const tx = mx * targetSpeed;
+  const tz = mz * targetSpeed;
+  const k = 1 - Math.exp(-10 * dt);
+  player.vx = lerp(player.vx, tx, k);
+  player.vz = lerp(player.vz, tz, k);
+  player.x += player.vx * dt;
+  player.z += player.vz * dt;
+
+  // Jump + gravity.
+  if (oneShot.jump && player.onGround) {
+    player.vy = JUMP_VELOCITY;
+    player.onGround = false;
+  }
+  oneShot.jump = false;
+  player.vy -= GRAVITY * dt;
+  player.y += player.vy * dt;
+  if (player.y <= 0) {
+    player.y = 0;
+    player.vy = 0;
+    player.onGround = true;
+  }
+
+  // Building collision (only while below the roof).
+  for (const b of colliders) {
+    if (player.y < b.height) {
+      const r = pushOutOfBox(player.x, player.z, PLAYER_RADIUS, b);
+      player.x = r.x;
+      player.z = r.z;
+    }
+  }
+  // World bounds (the sea edge is the east bound).
+  player.x = clamp(player.x, -WORLD_BOUND, WORLD_BOUND);
+  player.z = clamp(player.z, -WORLD_BOUND, WORLD_BOUND);
+
+  player.speed = Math.hypot(player.vx, player.vz);
+}
+
+// ---------------------------------------------------------------- camera
+
+function updateCamera(dt) {
+  const lookX = player.x - Math.sin(cam.yaw) * 1.2;
+  const lookZ = player.z - Math.cos(cam.yaw) * 1.2;
+  const lookY = 1.6;
+  const desired = new THREE.Vector3(
+    player.x + Math.sin(cam.yaw) * cam.dist,
+    lookY + cam.height,
+    player.z + Math.cos(cam.yaw) * cam.dist
+  );
+  if (shotName === 'city') {
+    // Aerial overview: fixed high camera over downtown, player in the plaza.
+    desired.set(95, 78, 95);
+    camera.position.copy(desired);
+    camera.lookAt(0, 10, 0);
+    return;
+  }
+  const s = 1 - Math.exp(-8 * dt);
+  camera.position.lerp(desired, s);
+  camera.lookAt(lookX, lookY, lookZ);
+}
+
+// ---------------------------------------------------------------- HUD (all live state)
+
+function starText() {
+  let s = '';
+  for (let i = 0; i < 5; i++) s += i < wanted ? '★' : '☆';
+  return s;
+}
+
+function clockText() {
+  const h = Math.floor(gameMinutes / 60) % 24;
+  const m = Math.floor(gameMinutes) % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+function updateHud() {
+  hud.money.textContent = `$${money.toLocaleString('en-US')}`;
+  hud.stars.textContent = starText();
+  hud.healthFill.style.width = `${clamp(health, 0, 100)}%`;
+  hud.healthNum.textContent = `${Math.round(health)}`;
+  hud.speed.textContent = `${Math.round(player.speed * 3.6)}`;
+  hud.location.textContent = districtAt(player.x, player.z);
+  hud.clock.textContent = clockText();
+  if (wanted === 0) {
+    hud.dispatch.innerHTML = '<div class="dispatch-row"><span class="dispatch-standby">STANDBY</span><span>No active units</span><span>—</span></div><div class="dispatch-note">Patrols on routine rounds.</div>';
+  } else {
+    hud.dispatch.innerHTML = `<div class="dispatch-row"><span class="dispatch-alert">${wanted} STAR${wanted > 1 ? 'S' : ''}</span><span>Units responding</span><span>${wanted}★</span></div>`;
+  }
+  drawMinimap();
+}
+
+/** Top-down minimap: roads, buildings, beach, sea and the player arrow. */
+function drawMinimap() {
+  const S = 180;
+  const half = LAYOUT.half;
+  const toPx = (v) => ((v + half) / (half * 2)) * S;
+  const ctx = minimapCtx;
+  ctx.clearRect(0, 0, S, S);
+  // Sea + sand (east strip).
+  ctx.fillStyle = '#1a6a7a';
+  ctx.fillRect(toPx(200), 0, S - toPx(200), S);
+  ctx.fillStyle = '#d8b878';
+  ctx.fillRect(toPx(192), 0, toPx(200) - toPx(192), S);
+  // Ground.
+  ctx.fillStyle = '#3a3a42';
+  ctx.fillRect(0, 0, toPx(192), S);
+  // Roads.
+  ctx.fillStyle = '#232328';
+  for (const r of LAYOUT.roads) {
+    ctx.fillRect(toPx(r - LAYOUT.roadW / 2), 0, LAYOUT.roadW * (S / (half * 2)), S);
+    ctx.fillRect(0, toPx(r - LAYOUT.roadW / 2), S, LAYOUT.roadW * (S / (half * 2)));
+  }
+  // Buildings.
+  ctx.fillStyle = '#8a8a96';
+  for (const b of colliders) {
+    if (b.height < 2) continue;
+    ctx.fillRect(toPx(b.minX), toPx(b.minZ), toPx(b.maxX) - toPx(b.minX), toPx(b.maxZ) - toPx(b.minZ));
+  }
+  // Plaza.
+  ctx.fillStyle = '#b8a888';
+  ctx.beginPath();
+  ctx.arc(toPx(0), toPx(0), 12, 0, Math.PI * 2);
+  ctx.fill();
+  // Player arrow (gold, rotated to the facing).
+  const px = toPx(player.x);
+  const py = toPx(player.z);
+  ctx.save();
+  ctx.translate(px, py);
+  ctx.rotate(Math.atan2(Math.sin(player.yaw), Math.cos(player.yaw)) + Math.PI);
+  ctx.fillStyle = '#ffd24a';
+  ctx.beginPath();
+  ctx.moveTo(0, -7);
+  ctx.lineTo(5, 6);
+  ctx.lineTo(-5, 6);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+  // North tick.
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 11px Arial';
+  ctx.fillText('N', S / 2 - 4, 12);
+}
+
+// ---------------------------------------------------------------- staged shots
+
+/** Position the player + camera for a named shot (?shot=onfoot|city|beach|plaza). */
+function setupShot(name) {
+  shotName = name;
+  mode = 'playing';
+  hud.title.classList.add('hidden');
+  if (name === 'onfoot') {
+    player.x = 0;
+    player.z = 40;
+    player.yaw = Math.PI;
+    cam.yaw = 0;
+    cam.dist = 6.5;
+    cam.height = 2.6;
+  } else if (name === 'city') {
+    player.x = 14;
+    player.z = 14;
+    player.yaw = -2.4;
+    cam.dist = 120;
+  } else if (name === 'beach') {
+    player.x = 218;
+    player.z = 10;
+    player.yaw = Math.PI / 2;
+    cam.yaw = -Math.PI / 2;
+    cam.dist = 6.5;
+    cam.height = 2.8;
+  } else if (name === 'plaza') {
+    player.x = 16;
+    player.z = 16;
+    player.yaw = -2.4;
+    cam.yaw = 0.74;
+    cam.dist = 7;
+    cam.height = 3;
+  } else {
+    shotName = null;
+    return;
+  }
+  // Snap the camera to the shot's framing before the first frame renders.
+  const lookX = player.x - Math.sin(cam.yaw) * 1.2;
+  const lookZ = player.z - Math.cos(cam.yaw) * 1.2;
+  if (name === 'city') {
+    camera.position.set(95, 78, 95);
+    camera.lookAt(0, 10, 0);
+  } else {
+    camera.position.set(
+      player.x + Math.sin(cam.yaw) * cam.dist,
+      1.6 + cam.height,
+      player.z + Math.cos(cam.yaw) * cam.dist
+    );
+    camera.lookAt(lookX, 1.6, lookZ);
+  }
+  character.group.position.set(player.x, player.y, player.z);
+  character.group.rotation.y = player.yaw;
+}
+
+/** Place the character mesh at the player's state and run one animation step. */
+function placeCharacter(dt) {
+  character.group.position.set(player.x, player.y, player.z);
+  character.group.rotation.y = player.yaw;
+  const speed = mode === 'playing' ? player.speed : 0;
+  walkPhase = character.animate(walkPhase, speed, dt, !player.onGround);
+  // animate() writes the walk bob into position.y; add the jump height back.
+  character.group.position.y += player.y;
+}
+
+// ---------------------------------------------------------------- main loop
+
+let lastNow = performance.now();
+
+function loop(now) {
+  requestAnimationFrame(loop);
+  const dt = Math.min((now - lastNow) / 1000, 0.05);
+  lastNow = now;
+  frameCount++;
+
+  if (mode === 'playing') {
+    updatePlayer(dt);
+    gameMinutes += dt / 10; // one game-minute per ten real seconds
+    placeCharacter(dt);
+    updateCamera(dt);
+    updateHud();
+  } else if (mode === 'title') {
+    cam.yaw += dt * 0.05;
+    camera.position.set(Math.sin(cam.yaw) * 150, 70, Math.cos(cam.yaw) * 150);
+    camera.lookAt(0, 15, 0);
+    placeCharacter(dt);
+  }
+  // The sea shimmers: scroll its texture slowly.
+  city.sea.offset.x += dt * 0.008;
+  city.sea.offset.y += dt * 0.004;
+
+  renderer.render(scene, camera);
+
+  if (frameCount === 1) window.__gameReady = true;
+  if (shotName && !shotReady && frameCount >= 4) {
+    shotReady = true;
+    window.__shotReady = true;
+  }
+}
+
+// ---------------------------------------------------------------- test hooks + init
+
+window.__gameReady = false;
+window.__shotReady = false;
+window.__vb = {
+  get mode() {
+    return mode;
+  },
+  get player() {
+    return { x: player.x, y: player.y, z: player.z, speed: player.speed, yaw: player.yaw, onGround: player.onGround };
+  },
+  get money() {
+    return money;
+  },
+  get health() {
+    return health;
+  },
+  get wanted() {
+    return wanted;
+  },
+  get clock() {
+    return clockText();
+  },
+  get district() {
+    return districtAt(player.x, player.z);
+  },
+  get buildingCount() {
+    return city.buildingCount;
+  },
+  get colliderCount() {
+    return colliders.length;
+  },
+  start: () => startGame(),
+  teleport: (x, z) => {
+    player.x = x;
+    player.z = z;
+    player.vx = 0;
+    player.vz = 0;
+  },
+  setWanted: (n) => {
+    wanted = n;
+  },
+};
+
+const params = new URLSearchParams(window.location.search);
+const shotParam = params.get('shot');
+if (shotParam) setupShot(shotParam);
+updateHud();
+requestAnimationFrame(loop);

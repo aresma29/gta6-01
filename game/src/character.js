@@ -1,191 +1,162 @@
-// VICE BAY 3D — improved character model: a proper humanoid with a shaped
-// torso, a head with a face, arms ending in HANDS and legs ending in FEET,
-// and a more natural walk/run animation (arm swing, leg stride, body lean,
-// knee bend, jump tuck). Forward is local +Z; set group.rotation.y = heading
-// so forward becomes (sin(heading), 0, cos(heading)) in the world.
-// Written fresh for Stage 2 (visual upgrade ordered by the owner).
-import * as THREE from '../vendor/three/three.module.min.js';
+// VICE BAY — the player character. A procedural humanoid with a shaped body:
+// a torso in a red jacket, a head with a face, hair and a cap, arms ending in
+// hands and legs ending in feet. The walk/run cycle swings the limbs, bobs
+// the body and leans forward at a run; a jump tucks the legs.
 
-function box(w, h, d, colour, opts = {}) {
-  const m = new THREE.Mesh(
-    new THREE.BoxGeometry(w, h, d),
-    new THREE.MeshStandardMaterial({ color: colour, roughness: opts.rough ?? 0.85, metalness: opts.metal ?? 0, emissive: opts.emissive ?? 0x000000, emissiveIntensity: opts.ei ?? 1 })
-  );
-  m.castShadow = true;
-  return m;
-}
+import * as THREE from 'three';
+import { clamp } from './util.js';
 
-// A humanoid standing on the ground (feet at y=0), ~1.85 m tall.
-// Legs: thigh + shin (knee pivot) + shoe. Arms: upper arm + forearm
-// (elbow pivot) + hand. Torso: hips + chest + shoulder bar + collar.
-// Head: sphere + hair cap + eyes on the face (+Z).
-export function makeCharacter({ shirt = 0xc0392b, pants = 0x2c3e50, skin = 0xc9976b, scale = 1, hat = false, police = false } = {}) {
-  const g = new THREE.Group();
-  const parts = {};
-  const shirtCol = police ? 0x1e2a4a : shirt;
-  const shoeCol = 0x1c1e24;
-  const hairCol = 0x241a12;
+/** Build the character group. Returns { group, parts, animate }. */
+export function makeCharacter() {
+  const skin = new THREE.MeshStandardMaterial({ color: 0xc98a6a, roughness: 0.7 });
+  const jacket = new THREE.MeshStandardMaterial({ color: 0xc23a2e, roughness: 0.75 });
+  const jacketDark = new THREE.MeshStandardMaterial({ color: 0x8a2a22, roughness: 0.75 });
+  const shirt = new THREE.MeshStandardMaterial({ color: 0xf2ead8, roughness: 0.8 });
+  const pants = new THREE.MeshStandardMaterial({ color: 0x2a3242, roughness: 0.85 });
+  const shoes = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.6 });
+  const hairMat = new THREE.MeshStandardMaterial({ color: 0x2a1a12, roughness: 0.9 });
+  const capMat = new THREE.MeshStandardMaterial({ color: 0x3a3a3a, roughness: 0.8 });
+  const dark = new THREE.MeshStandardMaterial({ color: 0x141414, roughness: 0.5 });
 
-  // --- Legs (hip pivot at y=0.95) ---
-  function makeLeg(side) { // side -1 left, +1 right
+  const group = new THREE.Group();
+
+  // Legs: thigh + shin as one pivoting limb each, with a foot at the end.
+  function makeLeg(side) {
     const hip = new THREE.Group();
-    hip.position.set(side * 0.13, 0.95, 0);
-    const thigh = box(0.2, 0.5, 0.23, pants);
+    hip.position.set(0.14 * side, 0.95, 0);
+    const thigh = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.5, 0.24), pants);
     thigh.position.y = -0.25;
+    thigh.castShadow = true;
     hip.add(thigh);
-    const knee = new THREE.Group();
-    knee.position.y = -0.5;
-    hip.add(knee);
-    const shin = box(0.17, 0.44, 0.2, pants);
-    shin.position.y = -0.22;
-    knee.add(shin);
-    // Shoe: a flat box at the bottom, jutting forward (+Z).
-    const shoe = box(0.19, 0.11, 0.36, shoeCol, { rough: 0.6 });
-    shoe.position.set(0, -0.46, 0.07);
-    knee.add(shoe);
-    g.add(hip);
-    return { hip, knee };
+    const shin = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.42, 0.2), pants);
+    shin.position.y = -0.68;
+    shin.castShadow = true;
+    hip.add(shin);
+    const foot = new THREE.Mesh(new THREE.BoxGeometry(0.19, 0.1, 0.34), shoes);
+    foot.position.set(0, -0.92, 0.06);
+    foot.castShadow = true;
+    hip.add(foot);
+    group.add(hip);
+    return hip;
   }
-  const legL = makeLeg(-1);
-  const legR = makeLeg(1);
 
-  // --- Torso: hips + chest + shoulders + collar ---
-  const hips = box(0.52, 0.24, 0.32, pants);
-  hips.position.y = 1.04;
-  g.add(hips);
-  const chest = box(0.6, 0.56, 0.36, shirtCol);
-  chest.position.y = 1.42;
-  g.add(chest);
-  // A slightly darker jacket panel on the chest front (a zip line).
-  const zip = box(0.06, 0.5, 0.02, 0x000000, { rough: 0.9 });
-  zip.material = new THREE.MeshStandardMaterial({ color: 0x2a1a1a, roughness: 0.9 });
-  zip.position.set(0, 1.42, 0.19);
-  g.add(zip);
-  const shoulders = box(0.66, 0.14, 0.38, shirtCol);
-  shoulders.position.y = 1.68;
-  g.add(shoulders);
-  const collar = box(0.3, 0.08, 0.05, shirtCol);
-  collar.position.set(0, 1.74, 0.18);
-  g.add(collar);
-
-  // --- Head: sphere + hair + eyes (face on +Z) ---
-  const head = new THREE.Group();
-  head.position.y = 1.86;
-  const skull = new THREE.Mesh(
-    new THREE.SphereGeometry(0.235, 16, 12),
-    new THREE.MeshStandardMaterial({ color: skin, roughness: 0.65 })
-  );
-  skull.castShadow = true;
-  head.add(skull);
-  // Hair: a flattened dark sphere covering the top and back of the head.
-  const hair = new THREE.Mesh(
-    new THREE.SphereGeometry(0.245, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.55),
-    new THREE.MeshStandardMaterial({ color: hairCol, roughness: 0.95 })
-  );
-  hair.position.y = 0.02;
-  hair.rotation.x = -0.35;
-  head.add(hair);
-  // Eyes: two small dark boxes on the face.
-  for (const sx of [-1, 1]) {
-    const eye = new THREE.Mesh(
-      new THREE.BoxGeometry(0.045, 0.06, 0.02),
-      new THREE.MeshStandardMaterial({ color: 0x14100c, roughness: 0.4 })
-    );
-    eye.position.set(sx * 0.085, 0.02, 0.225);
-    head.add(eye);
-  }
-  // Nose: a tiny skin box.
-  const nose = box(0.05, 0.09, 0.05, skin);
-  nose.position.set(0, -0.05, 0.24);
-  head.add(nose);
-  g.add(head);
-
-  // --- Arms (shoulder pivot at y=1.62) ---
+  // Arms: upper + forearm, ending in a hand.
   function makeArm(side) {
     const shoulder = new THREE.Group();
-    shoulder.position.set(side * 0.38, 1.62, 0);
-    const upper = box(0.17, 0.36, 0.2, shirtCol);
-    upper.position.y = -0.18;
+    shoulder.position.set(0.34 * side, 1.52, 0);
+    const upper = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.42, 0.2), jacket);
+    upper.position.y = -0.21;
+    upper.castShadow = true;
     shoulder.add(upper);
-    const elbow = new THREE.Group();
-    elbow.position.y = -0.36;
-    shoulder.add(elbow);
-    const fore = box(0.15, 0.32, 0.17, police ? 0x1e2a4a : shirtCol);
-    fore.position.y = -0.16;
-    elbow.add(fore);
-    // Hand: a skin-coloured fist at the end of the forearm.
-    const hand = box(0.15, 0.17, 0.17, skin, { rough: 0.7 });
-    hand.position.y = -0.38;
-    elbow.add(hand);
-    g.add(shoulder);
-    return { shoulder, elbow };
+    const fore = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.38, 0.17), jacketDark);
+    fore.position.y = -0.58;
+    fore.castShadow = true;
+    shoulder.add(fore);
+    const hand = new THREE.Mesh(new THREE.SphereGeometry(0.09, 10, 8), skin);
+    hand.position.y = -0.82;
+    hand.castShadow = true;
+    shoulder.add(hand);
+    group.add(shoulder);
+    return shoulder;
   }
+
+  const legL = makeLeg(-1);
+  const legR = makeLeg(1);
   const armL = makeArm(-1);
   const armR = makeArm(1);
 
-  if (hat) {
-    const cap = box(0.5, 0.08, 0.5, 0x1e2a4a);
-    cap.position.y = 2.06;
-    g.add(cap);
-    const brim = box(0.5, 0.05, 0.22, 0x1e2a4a);
-    brim.position.set(0, 2.02, 0.28);
-    g.add(brim);
+  // Torso: a shaped jacket — a chest box, a waist band and an open shirt V.
+  const chest = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.62, 0.36), jacket);
+  chest.position.y = 1.26;
+  chest.castShadow = true;
+  group.add(chest);
+  const waist = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.16, 0.34), jacketDark);
+  waist.position.y = 0.98;
+  group.add(waist);
+  const shirtV = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.4, 0.05), shirt);
+  shirtV.position.set(0, 1.38, 0.19);
+  group.add(shirtV);
+  // Jacket collar.
+  const collar = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.1, 0.06), jacketDark);
+  collar.position.set(0, 1.58, 0.19);
+  collar.rotation.x = -0.3;
+  group.add(collar);
+
+  // Head: skin sphere, hair cap, eyes, nose and a baseball cap.
+  const head = new THREE.Group();
+  head.position.y = 1.78;
+  const skull = new THREE.Mesh(new THREE.SphereGeometry(0.21, 16, 12), skin);
+  skull.castShadow = true;
+  head.add(skull);
+  const hair = new THREE.Mesh(new THREE.SphereGeometry(0.215, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.55), hairMat);
+  hair.position.y = 0.03;
+  head.add(hair);
+  for (const s of [-1, 1]) {
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.028, 8, 6), dark);
+    eye.position.set(0.075 * s, 0.02, 0.19);
+    head.add(eye);
   }
-  if (police) {
-    const badge = box(0.1, 0.1, 0.02, 0xffd60a, { emissive: 0x664400, ei: 0.5 });
-    badge.position.set(-0.16, 1.5, 0.19);
-    g.add(badge);
+  const nose = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.09, 0.06), skin);
+  nose.position.set(0, -0.05, 0.21);
+  head.add(nose);
+  const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.09, 16), capMat);
+  cap.position.y = 0.17;
+  head.add(cap);
+  const brim = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.03, 0.22), capMat);
+  brim.position.set(0, 0.14, 0.26);
+  head.add(brim);
+  group.add(head);
+
+  // A small gold chain — the character's one piece of jewellery.
+  const chain = new THREE.Mesh(new THREE.TorusGeometry(0.14, 0.02, 6, 16), new THREE.MeshStandardMaterial({ color: 0xd8a03a, roughness: 0.3, metalness: 0.8 }));
+  chain.position.set(0, 1.56, 0.16);
+  chain.rotation.x = 0.5;
+  group.add(chain);
+
+  /**
+   * Animate one frame. speed is the horizontal speed (m/s), dt the frame
+   * time, jumping whether the character is airborne, and phase is advanced
+   * by the caller (distance travelled / stride). Returns the new phase.
+   */
+  function animate(phase, speed, dt, jumping) {
+    const moving = speed > 0.3;
+    const run = speed > 6.5;
+    const swing = moving ? (run ? 0.85 : 0.55) : 0;
+    const stride = run ? 1.9 : 1.35;
+    const nextPhase = phase + (speed * dt) / stride;
+    const s = Math.sin(nextPhase * Math.PI * 2);
+    const c = Math.cos(nextPhase * Math.PI * 2);
+    legL.rotation.x = s * swing;
+    legR.rotation.x = -s * swing;
+    armL.rotation.x = -s * swing * 0.9;
+    armR.rotation.x = s * swing * 0.9;
+    armL.rotation.z = 0.12;
+    armR.rotation.z = -0.12;
+    // Knees: bend the shin a little at the back of the swing.
+    legL.rotation.x += Math.max(0, -c) * 0.25;
+    legR.rotation.x += Math.max(0, c) * 0.25;
+    // Body bob + forward lean at a run; a jump tucks the legs.
+    const bob = moving ? Math.abs(c) * (run ? 0.07 : 0.045) : Math.sin(performance.now() * 0.002) * 0.012;
+    group.position.y = bob;
+    group.rotation.x = run ? 0.14 : moving ? 0.05 : 0;
+    if (jumping) {
+      legL.rotation.x = -0.7;
+      legR.rotation.x = 0.5;
+      armL.rotation.x = -0.9;
+      armR.rotation.x = -0.9;
+      group.rotation.x = 0.08;
+    }
+    // Idle breathing: a faint chest rise when standing still.
+    if (!moving && !jumping) {
+      chest.scale.y = 1 + Math.sin(performance.now() * 0.0025) * 0.015;
+    } else {
+      chest.scale.y = 1;
+    }
+    return nextPhase;
   }
 
-  g.scale.setScalar(scale);
-  parts.legL = legL.hip; parts.kneeL = legL.knee;
-  parts.legR = legR.hip; parts.kneeR = legR.knee;
-  parts.armL = armL.shoulder; parts.elbowL = armL.elbow;
-  parts.armR = armR.shoulder; parts.elbowR = armR.elbow;
-  parts.torso = chest; parts.head = head;
-  return { group: g, parts, bob: 0 };
+  return { group, parts: { legL, legR, armL, armR, head, chest }, animate };
 }
 
-// Pose the character. phase advances with movement; amp 0 = idle, ~0.6 walk,
-// ~0.95 run. punchT 0..1 while a punch is playing. lean = forward lean
-// (radians). airT 0..1 while airborne (jump tuck). Sets c.bob (vertical bob,
-// added to the group y by the caller).
-export function poseCharacter(c, phase, amp, punchT, lean = 0, airT = 0) {
-  const s = Math.sin(phase);
-  const s2 = Math.sin(phase + Math.PI);
-  // Legs: thighs swing opposite; knees bend as the leg lifts (phase-shifted).
-  c.parts.legL.rotation.x = s * amp * 0.85;
-  c.parts.legR.rotation.x = s2 * amp * 0.85;
-  c.parts.kneeL.rotation.x = Math.max(0, Math.sin(phase + 0.7)) * amp * 1.05;
-  c.parts.kneeR.rotation.x = Math.max(0, Math.sin(phase + Math.PI + 0.7)) * amp * 1.05;
-  // Arms: swing opposite to the same-side leg, elbows slightly bent.
-  c.parts.armL.rotation.x = s2 * amp * 0.65;
-  c.parts.armR.rotation.x = s * amp * 0.65;
-  c.parts.elbowL.rotation.x = -0.3 - Math.max(0, s2) * amp * 0.35;
-  c.parts.elbowR.rotation.x = -0.3 - Math.max(0, s) * amp * 0.35;
-  // Arms hang slightly out from the body.
-  c.parts.armL.rotation.z = 0.1;
-  c.parts.armR.rotation.z = -0.1;
-  if (punchT > 0) {
-    const p = Math.sin(punchT * Math.PI);
-    c.parts.armR.rotation.x = -1.55 * p;
-    c.parts.elbowR.rotation.x = -0.08 * p;
-    c.parts.armR.rotation.z = -0.15 * p;
-  }
-  // Jump tuck: thighs forward, knees bent, arms out.
-  if (airT > 0) {
-    c.parts.legL.rotation.x = 0.55 * airT + s * amp * 0.3;
-    c.parts.legR.rotation.x = 0.35 * airT + s2 * amp * 0.3;
-    c.parts.kneeL.rotation.x = 1.0 * airT;
-    c.parts.kneeR.rotation.x = 0.8 * airT;
-    c.parts.armL.rotation.x = -0.5 * airT;
-    c.parts.armR.rotation.x = -0.5 * airT;
-    c.parts.armL.rotation.z = 0.45 * airT;
-    c.parts.armR.rotation.z = -0.45 * airT;
-  }
-  // Torso: forward lean with speed + a slight side sway; head stays level.
-  c.parts.torso.rotation.x = lean;
-  c.parts.torso.rotation.z = Math.sin(phase) * amp * 0.05;
-  c.parts.head.rotation.x = -lean * 0.6;
-  c.bob = Math.abs(Math.cos(phase)) * 0.045 * amp;
-}
+/** Height of the character's feet above the ground when standing (for the camera). */
+export const CHARACTER_EYE_HEIGHT = 1.65;

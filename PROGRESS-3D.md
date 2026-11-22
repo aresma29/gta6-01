@@ -147,3 +147,61 @@ Branch `full-3d`; main untouched at 3cd30a68. Built in the recorded session (rec
 - **Stage 4 — Missions + polish:** 4 story missions (First Wheels, Package Run, Rival Turf, The Big Score) with markers + timers + rewards, money changing on rewards, day/night polish, audio (engine, siren, effects — the audio module already exists, it is not wired in), final 4 screenshots (the chase shot is already the hero), README update, kit check, commit + push.
 - **Not verified in real time (logic reviewed, noted honestly):** wanted decay (~13 s per star in game time) and the escape behaviour — SwiftShader runs at ~0.05× real time, so a decay cycle would take ~4 minutes of wall time per star; the decay code path (heat, unseen distance, grace period) was verified by reading, not by a live wait. The helicopter's rooftop clearance (altitude = rooftop + 10) is computed from the building list and was verified in the chase shot (the helicopter flew above the market-district roofs).
 - **Still a weakness vs Top 10:** no missions yet (Stage 4), the HUD mission panel is a free-roam placeholder, no audio yet, the chase shot has no police car directly behind the player car (the chase-cam looks forward — the reference shows the same), and our 3D is still low-poly/stylised vs the reference board's rendered look. The density gap is now much smaller: helicopter + 3 police + traffic + NPCs + ferris wheel + neon + live dense HUD are all in one frame.
+
+---
+
+## REBUILD — Stage 1 (core) — DONE 22 Nov ~17:05 WIB (new recording)
+
+**Why a rebuild:** the old recording 01a20223 died when the VM was replaced (~15:30 WIB), so the old Stage 3 was unwitnessed and cannot be submitted. The old Stage 2 tip (ee2c8ab) was sealed + submitted as a backup (accepted, stage scored). This rebuild re-authors the whole game under a NEW recording so every file is witnessed and submittable.
+**Branch:** `full-3d-v2` (from the old Stage 3 tip dcdafce; main + `backup/vice-bay-2d` untouched at 3cd30a68).
+**Recording:** 01a202aa-b90a-7499-a6cc-0358480ff238 (PID 13812, started 16:51:12 WIB, running — NOT stopped or sealed).
+**Authorship rule followed:** every game file was written FRESH via muse.write in this session, without reading the old files first (the old game source was deleted before the rewrite, so no line could be copied). Verified: none of the 8 rewritten files is byte-identical to its old version.
+
+### What was deleted (and why)
+The old Stage 2–4 modules were removed from the repo in this commit (they live in git history on `full-3d` at dcdafce, nothing is lost): `actors.js`, `audio.js`, `citydetails.js`, `combat.js`, `damage.js`, `neon.js`, `npcs.js`, `police.js`, `vehicles.js`. They are Stage 2–4 features, not Stage 1, and leaving them in place would have put unwritten (pre-recording) lines into the dossier. **Each later stage MUST write its modules fresh via muse.write — never restore them from git history.**
+
+### Features completed (all fresh)
+- **3D character:** shaped humanoid (red jacket, shirt V, collar, gold chain, head with face/eyes/hair/cap, arms ending in hands, legs ending in feet), walk/run animation (limb swing, knee bend, body bob, forward lean at a run, jump tuck, idle breathing).
+- **Third-person camera:** smooth follow, mouse drag to orbit (yaw + pitch), lookahead, camera smoothing.
+- **3D city:** seeded (seed 1) 480×480 m dusk coastal city — 7×7 road grid, ~70 buildings in five districts (Downtown towers 26–58 m, Harbour warehouses, Market, Beach, Hills houses), 6 named landmarks with illuminated signs (HOSPITAL + red cross, BANK, GARAGE, SAFEHOUSE, MARKET, HARBOUR) + a tall tower with a vertical pink "VICEBAY" neon sign, 4 billboards (VICE BAY, SUNSET GT, VICE FM 98.5, CORAL COLA), beach + teal sea (animated texture), ~40 palms, streetlights on every road, plaza fountain, park trees, harbour containers, benches/hydrants/bins, 10 parked prop cars, beach umbrellas + lifeguard stand.
+- **Dusk / golden-hour lighting:** low warm sun over the sea (east), purple hemisphere + ambient fill (hemi 1.15, ambient 0.8, exposure 1.18), gradient sky dome (purple → magenta → orange), distance fog.
+- **Controls:** WASD/arrows move (camera-relative), Shift run, Space jump, mouse drag look, P/Esc pause, Enter start, M mute (placeholder — audio arrives in Stage 4), save/load (localStorage).
+- **HUD (all live state):** money ($250), wanted stars (0 — ☆☆☆☆☆), health bar (100), mission panel (FREE ROAM — "Explore the city. Missions arrive in Stage 2."), VBPD dispatch board (STANDBY — no active units, live from the wanted level), dialogue box (Rico — Fixer), circular minimap (roads, buildings, beach, sea, plaza, player arrow, N tick), location name (district, live) + clock (18:42, advancing 1 min / 10 s) + radio (VICE FM 98.5), live speed KM/H, controls footer.
+- **Menus:** title screen (orbiting camera over the city, START / CONTINUE when a save exists), pause menu (resume / save / load / restart / mute / quit to title).
+- **Shot staging:** `?shot=onfoot|city|beach|plaza` + `window.__shotReady` (deterministic, seed 1). Test hooks: `window.__gameReady`, `window.__vb` (mode, player, money, health, wanted, clock, district, building/collider counts, start, teleport, setWanted).
+
+### Features TESTED (headless Chromium 1255, SwiftShader, 1280×720; test script `~/workspace/makefun/gta6-01/test-rebuild-stage1.py`)
+- **24/24 checks PASS, 0 console errors, 0 page errors, 0 failed requests, 0 external requests (offline verified).**
+- Title loads (`__gameReady`), START → playing. Walk 5.00 m/s, run 8.11 m/s, jump apex 1.26 m (target ~1.5 m; the sampled apex is a lower bound — SwiftShader samples sparsely), lands. Save/load round-trips (teleport → save → teleport away → load → position restored).
+- All 4 staged shots reach `__shotReady` (onfoot, city, beach, plaza).
+- **Screenshots (all viewed, all ≤256 KiB):**
+  - `screenshots/1-onfoot.jpg` (86,534 B) — third-person behind the character (red jacket, cap) on a street by the plaza fountain, HOSPITAL sign + red cross, lit-window buildings, palms, streetlights, dusk sky, dense HUD.
+  - `screenshots/2-city.jpg` (123,800 B) — aerial dusk city: ~70 buildings with lit windows, roads + crosswalks, plaza fountain, the VICE BAY vertical neon sign, HOSPITAL + SAFEHOUSE + BANK signs.
+  - `screenshots/3-beach.jpg` (65,995 B) — dusk beach: character on the sand, an umbrella, teal sea with a golden sun glow, "SUNSET STRAND".
+  - `screenshots/4-plaza.jpg` (88,703 B) — the plaza fountain + HOSPITAL sign + lit-window towers + palms, character centre frame.
+  - The superseded old `2-chase.jpg`, `3-city.jpg`, `4-beach.jpg` were removed (they live in git history at dcdafce) — the dossier caps at 4 screenshots.
+- `shots.json` rewritten for the 4 rebuild shots (onfoot, city, beach, plaza).
+- `main.ts` rewritten fresh (Node 22, stdlib only): copies game/ + screenshots/ to the output dir and writes dossier.json with buildDossier. **Dossier valid:** schema makefun/dossier/v1, 4 images, text 67,689 bytes of the 163,840 cap, 6 source files (67,038 bytes), 3 vendored (three.js).
+- **Kit check: 4 passed, 0 failed, 17 skipped, 5 checked at submission** (the 5 are repo/submission items the site checks at submit time).
+
+### Errors / obstacles found (all fixed)
+1. **Favicon 404 (1 console error):** the browser requested /favicon.ico and got a 404. Fixed by adding `<link rel="icon" href="data:,">` to index.html. Re-test: 0 console errors.
+2. **Walk-movement check failed (moved 1.2 m):** a fixed 2 s wait after reaching speed is only ~2–6 frames under SwiftShader (dt clamped to 0.05 s), so the player covers ~0.25 m/frame. The game was correct (speed 4.75 m/s). Fixed the test to poll for ≥3 m of displacement instead of a fixed sleep. Re-test: moved 3.1 m.
+3. **Jump-apex check read 0.62 m:** the test read y once right after the poll fired (mid-rise). Fixed the test to sample y over time and take the max. Re-test: apex 1.26 m.
+4. **Dossier failed on `screenshots.max` (6 files):** the repo held the old `3-city.jpg` + `4-beach.jpg` alongside the 4 new shots. Fixed by removing the two superseded old shots; the dossier then built cleanly.
+
+### Honest notes
+- **Beach shot is the weakest of the four:** the sand foreground is a wide empty expanse and the lifeguard stand sits at the frame's right edge. It is a genuine beach scene (character + umbrella + teal sea + sun glow + dense HUD), but the framing could be denser. Re-stage candidate for Stage 4's final shots.
+- **The character reads dark from behind** (backlit by the low eastern sun). The red jacket + cap are visible, but the figure is mostly silhouette in the on-foot/beach shots. A camera-side fill light would help; noted for Stage 4 polish.
+- **SwiftShader is ~1–3 FPS** in the VM (software rendering). Speeds are correct in game time; wall-time distances look small. This is a test-environment artifact, not a game bug. Draw calls are light (~70 buildings + props, one mesh each) — a real GPU will run it at 60 FPS.
+
+### Features NOT yet done (next stages)
+- **Stage 2 — Vehicles + chase-cam:** 5 drivable cars (SUNSET GT hero, CORAL SEDAN, HARBOUR TRUCK, PALM TAXI, BEACH VAN), enter/exit (E), driving physics, cinematic chase-cam, traffic cars, `?shot=drive`. **Must write `game/src/vehicles.js` fresh** (do not restore the deleted one).
+- **Stage 3 — Police + NPCs + combat:** wanted 0–5 stars, police cars (pursuit + ram), police HELICOPTER (spotlight cone), pedestrians, punch/weapon combat, vehicle damage, neon landmarks (ferris wheel), `?shot=chase`. **Must write `game/src/police.js`, `npcs.js`, `combat.js`, `damage.js`, `neon.js`, `actors.js` fresh.**
+- **Stage 4 — Missions + polish:** 4 story missions with markers + timers + rewards, money changing on rewards, dense HUD fed by live data, audio (Web Audio synth), final 4 screenshots (chase-cam + helicopter + dense HUD as the hero), README update, kit check, commit + push. **Must write `game/src/audio.js` (+ `citydetails.js` if split out) fresh.**
+- **Not in scope (simplified, honest):** procedural low-poly models only, no detailed rigs, no helicopter roadblocks, no weapon wheel beyond the shown slots, 4 missions (not 8–10), no garage upgrades, no respect ranks beyond the HUD label.
+
+### Estimated completion time (rebuild)
+- Stage 1 DONE (~1 h of build/test, 22 Nov ~16:55–17:05 WIB).
+- Stage 2 (vehicles + chase-cam): ~1–1.5 h. Stage 3 (police + helicopter + NPCs + combat): ~2–3 h. Stage 4 (missions + audio + polish + final shots): ~2–3 h.
+- **Total remaining: ~5–7 h of build/test time.** Deadline 24 Nov 22:00 WIB — comfortable if Stages 2–4 run back-to-back under the same recording. **Do NOT stop or seal the recording until the owner approves the final result.**
