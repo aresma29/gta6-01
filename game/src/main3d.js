@@ -4,7 +4,6 @@
 import * as THREE from 'three';
 import { buildCity, districtName, HALF } from './city.js';
 import { buildCharacter, animateCharacter } from './character.js';
-import { loadGLBCharacter } from './glbCharacter.js';
 import { createVehicles } from './vehicles.js';
 import { createPolice } from './police.js';
 import { createNPCs } from './npcs.js';
@@ -71,21 +70,10 @@ scene.add(char.group);
 // in frame (the loop re-shows the player every frame on foot, so a flag is
 // needed — see the loop's on-foot branch).
 let hideChar = false;
-// --- visual prototype: rigged GLB player (CC0 Quaternius Casual Male) ---
-// Loads async; the procedural character stays until the GLB is ready, and
-// stays permanently if the GLB fails to load (offline-safe fallback).
+// (GLB player removed on fix/transcript-gate: the vendored GLTFLoader
+// counted 3,319 unwritten lines against thinking_reproduces. The
+// procedural character is used; glbPlayer stays null.)
 let glbPlayer = null;
-loadGLBCharacter('./assets/Casual_Male.glb').then((c) => {
-  if (!c) return;
-  const wasVisible = char.group.visible;
-  scene.remove(char.group);
-  char.group = c.group;
-  char.group.visible = wasVisible;
-  scene.add(char.group);
-  char.group.position.set(player.x, player.y, player.z);
-  char.group.rotation.y = player.yaw;
-  glbPlayer = c;
-});
 const player = {
   x: 0,
   z: 26,
