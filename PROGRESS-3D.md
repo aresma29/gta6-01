@@ -620,3 +620,23 @@ The old Stage 2–4 modules were removed from the repo in this commit (they live
 ### Audit outcome
 - **The provisional final candidate is VERIFIED and ready for Mot's submission decision.** 55/55 tests pass, dossier valid + under both caps, kit check passes, all checkpoints + backup untouched, no seal, no submit.
 - **Do NOT change the candidate after this audit** (no new features, no new visual code) without reporting to Mot and getting his approval.
+
+---
+
+## Option A completion (transcript-gate fix) — 22 Nov ~22:32 WIB
+
+**Decision:** Mot delegated the choice ("Pilih mana saja yang terbaik"); the recommendation was Option A. The backup (01a202a7, 980,836) is PICKED as final and stays final until Mot decides otherwise (only after Option A's score is verified HIGHER than 980,836).
+
+**What changed (branch `fix/transcript-gate`, from 58e7a86):** removed the vendored GLTFLoader (GLTFLoader.js 2,329 lines + BufferGeometryUtils.js 759 + SkeletonUtils.js 231, all via `cp`) + glbCharacter.js; the game reverts to procedural characters. The GLB files stay in game/assets/ (binary, not counted, unused). Missions, audio, lighting, cars, police, helicopter, combat, NPCs, HUD, save/load are untouched.
+
+**Why:** 58e7a86 FAILS the transcript gate locally — thinking_reproduces 42.9% unwritten (> 40%), caused 99.85% by the 3 loader files. Option A passes locally: 13 passed, 0 failed; thinking_reproduces 99.2% authored / 0.2% unwritten (verified by a re-run). Server estimate ~18–24% unwritten (from git diff, NOT directly verified — the local check uses session files, the site uses sealed recordings only). transcripts_witnessed is server-only and UNVERIFIED for all options.
+
+**Regression (full 55-check, fix branch, 22 Nov ~22:32 WIB): 55/55 PASS**, 0 console/page errors, 0 failed/external requests (offline). Walk 4.32 m/s, run 8.37 m/s, jump 1.22 m, save/load round-trips, M1 +$100 / M2 +$150 / M3 +$200 / M4 +$250 (all 4 done, $250→$950), NPCs 10, E enters car, theft → wanted=1, police 70→69 m, car 21 KM/H, helicopter at 3 stars (27.5 m, y=32), 3 police cars, dispatch AIR 1, punch hits NPC (-15.2, -69.4) attempt 1 + knocked down, pistol hits, wanted rises to 3, FPS 0 (SwiftShader).
+
+**Screenshots re-taken (fix branch):** 1-onfoot.jpg 72,124 B + 4-beach.jpg 67,818 B now show the procedural character (red shirt, boxy) — viewed, correct. 2-chase.jpg 122,353 B + 3-city.jpg 148,700 B re-taken (no GLB character in them). All ≤256 KiB.
+
+**Dossier (fix branch):** text 157,340/163,840 bytes (headroom 6,500, up from 1,602), total 710,817 bytes, 4 images, schema valid. Repo 16 MB (well under 64 MB). Kit check: 4 passed, 0 failed, 17 skipped, 5 checked at submission.
+
+**Remaining shortcomings (Option A):** GLB characters are gone (procedural/boxy) — a real visual loss; police ram / on-foot pathfinding still NOT verified; cars are extruded profiles, not GLB models; city is still procedural boxes; FPS 0–1 SwiftShader (real-hardware FPS UNVERIFIED); transcripts_witnessed UNVERIFIED (server-only).
+
+**Next:** seal recording 01a202e0 + submit the fix commit (needs Mot's approval — granted by delegation for Option A). The backup stays PICKED as final; the pick changes ONLY after Option A's score is verified HIGHER than 980,836.
