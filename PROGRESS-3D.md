@@ -525,3 +525,35 @@ The old Stage 2–4 modules were removed from the repo in this commit (they live
 - The dossier text headroom is only 3,240 bytes. Cars must net-save bytes.
 - The `?night=1` param is test-only (not a gameplay day/night cycle); the scene is still permanently dusk-lit.
 - Only 1 of 10 NPCs is a GLB; the other 9 are still procedural boxes.
+
+## Visual Stage 2 — Cars (extruded side-profile bodies)
+
+**Context:** Lighting done (commit d81f7c9). This record covers CARS only — the second half of Visual Stage 2. Branch `visual-prototype`. Stage 4 checkpoint (5d5aeaa), character checkpoint (0aff3f6), lighting commit (d81f7c9) untouched; backup untouched. City/beach come ONLY after Mot evaluates lighting+cars.
+
+### What was built (cars)
+- **Extruded side-profile car bodies** (`game/src/vehicles.js`, new `extrude()` helper): the procedural car body is no longer a rectangular box. The body is now an extruded side-profile shape — a real car silhouette with a sloped hood, a low beltline, and a trunk — and the cabin is a separate extruded glasshouse (sloped windshield, flat roof, sloped rear window). The van gets a tall extruded body with a glass front; the truck keeps its boxy cab + open bed (a utility vehicle — the boxy look fits it). The wheels, grille/bumpers/lights/mirrors/spoiler/taxi sign, dent patch, and ALL systems (physics, chase-cam, enter/exit, damage, missions, police, combat, audio, HUD, save/load) are UNCHANGED — only the body/cabin MODELS changed.
+- **Dent patch repositioned** (y 1.02 → 0.9): the old flat hood panel sat at y=1.0; the new extruded hood top is ~0.88, so the dent now sits on the hood instead of floating above it.
+- **New staged shot `?shot=car`** (`game/src/main3d.js`): a side 3/4 view of the hero GT parked, player hidden, camera on the car's west side so the extruded side profile is in frame. Used only for verification (not a dossier shot).
+- **GLB car sourcing — attempted, NOT used.** The plan was CC0 GLB cars (Kenney Car Kit preferred). Findings: Kenney's direct download is per-visit browser-only (a plain curl request is refused; the download link is JS-driven via a `#inline-download` modal; no .zip URL in the static HTML). Filudi Assets (assets.filudi.com/a/car-kit) hosts Kenney packs as free CC0 but is JS-rendered (Astro) with no direct file URLs in the static HTML. Cinevva CDN car search returned only one vehicle (a Quaternius armored pickup — not a fit for 5 different cars). OpenGameArt search returned nothing usable. A Hugging Face dataset (jtatman/godot_rl_Racer) that bundles Kenney assets did not return a usable listing via its API. **No car GLB was downloaded.** The extruded-profile approach was chosen instead: fully local, offline, license-clean (no third-party asset), and it REPLACES the boxy body code rather than adding a loader + assets. If Mot wants real GLB cars later, the Kenney kit would need a browser download (parent's browser) or a different mirror.
+
+### Tests (headless Chromium 1255, SwiftShader, 1280×720)
+- **Full Stage 4 regression: 55/55 checks PASS, 0 console errors, 0 page errors, 0 failed requests, 0 external requests (offline verified).** No regression from the car-body change.
+- **Car shots (viewed):** `screenshots-visual/car-chase.jpg` (122,237 B, SUNSET GT 71 KM/H, 4 stars, white police car alongside, helicopter) and `car-drive.jpg` (106,134 B, 63 KM/H). From the rear chase-cam the car still reads as a red body with a black roof/spoiler — the side profile is not visible from directly behind. `screenshots-visual/car-side.jpg` (79,472 B) shows the parked GT from the side: a proper car silhouette — sloped hood, sloped windshield, flat roof, sloped rear window, spoiler at the rear, two wheels with hubcaps, headlight + taillight. Clearly better than the old boxy body + boxy cabin. `car-onfoot.jpg` (72,150 B) shows the GT parked in the distance with the character (face now visible) in the foreground.
+- **FPS:** meter reports 1 (SwiftShader, honest — verifies correctness, NOT real-hardware FPS).
+- **Dossier screenshots re-taken by the Stage 4 test** (1-onfoot 72,119 B, 2-chase 122,543 B, 3-city 148,653 B, 4-beach 68,106 B — all ≤256 KiB).
+
+### Dossier + kit check (after cars)
+- Dossier valid: schema makefun/dossier/v1, 4 images, text **162,238 bytes** of the 163,840 cap (`/output/dossier.json`, 717,355 bytes total). Headroom **1,602 bytes** (cars added 1,638 bytes: the `extrude()` helper + profiles + the `?shot=car` staged shot, minus the removed box calls). Repo 12 MB total — well under the 64 MB cap.
+- **Kit check: 4 passed, 0 failed, 17 skipped, 5 checked at submission.**
+- **The text cap is now the binding constraint for city/beach.** Headroom is only 1,602 bytes. City/beach work must be nearly byte-neutral (replace existing code, or use data-driven detail that does not add much code) or it cannot fit. Do NOT add large new code for city/beach. Do NOT delete features or cut needed code just to chase visuals.
+
+### Errors / obstacles found (all fixed)
+1. **Kenney Car Kit direct download is browser-only** — a plain curl request is refused; no .zip URL in the static HTML. Tried Filudi (JS-rendered, no direct URLs), Cinevva (one armored pickup only), OpenGameArt (nothing usable), Hugging Face (API listing failed). Pivoted to the extruded-profile approach instead of forcing a GLB download.
+2. **Dent patch floated above the new hood** — it was positioned for the old flat hood panel (y=1.02); the extruded hood top is ~0.88. Fixed by moving the dent to y=0.9.
+3. **The rear chase-cam does not show the side profile** — from directly behind, the car still reads as a red box with a black roof. The improvement is visible from the side (car-side.jpg). Added the `?shot=car` staged shot to verify the profile.
+
+### Remaining shortcomings / risks
+- The dossier text headroom is only **1,602 bytes**. City/beach must be nearly byte-neutral or it cannot fit — this is the binding constraint for the next visual stage.
+- No real GLB car models were sourced (Kenney download is browser-only). The cars are improved procedural models, not GLB assets. If Mot wants GLB cars, that needs a browser download or a different mirror.
+- Only the car BODY/CABIN changed; the wheels, lights, and details are the same procedural parts. The truck is still boxy (by design — a utility vehicle).
+- The `?shot=car` staged shot is verification-only (not a dossier shot); it costs dossier bytes (it is in `game/src/main3d.js`). It can be removed before submission to reclaim ~400 bytes if needed.

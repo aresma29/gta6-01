@@ -73,6 +73,26 @@ function buildWheel() {
 }
 
 /**
+ * Extruded side-profile body: a real car silhouette (sloped hood,
+ * windshield, roof, trunk) instead of a rectangular box. The profile is
+ * in (x = length, front = +x; y = height); it is extruded across the
+ * width and rotated so the length lies along the car's +z.
+ * (Stage 2: replaces the boxy body/cabin. Fully local, no external asset.)
+ */
+function extrude(points, width, mat) {
+  const s = new THREE.Shape();
+  s.moveTo(points[0][0], points[0][1]);
+  for (let i = 1; i < points.length; i++) s.lineTo(points[i][0], points[i][1]);
+  const g = new THREE.ExtrudeGeometry(s, { depth: width, bevelEnabled: false });
+  g.translate(0, 0, -width / 2);
+  g.rotateY(-Math.PI / 2);
+  const m = new THREE.Mesh(g, mat);
+  m.castShadow = true;
+  m.receiveShadow = true;
+  return m;
+}
+
+/**
  * Build a detailed procedural car facing +z (front at +z).
  * Returns the group, the four wheels and the dent patch (hidden until
  * the condition drops below 60).
@@ -86,20 +106,22 @@ function buildCarMesh(def) {
   const isVan = def.body === 'van';
   const len = isTruck ? 5.0 : 4.4;
 
-  // Body + cabin (truck: short cab + open bed; van: tall single box).
-  g.add(box(1.9, 0.72, len, paint, 0, 0.62, 0));
+  // Body + cabin. Cars: extruded silhouette (low body + glasshouse with
+  // sloped windshield/roof/rear window). Van: tall extruded body. Truck:
+  // short cab + open bed (kept boxy — a utility vehicle).
   if (isTruck) {
+    g.add(box(1.9, 0.72, 5.0, paint, 0, 0.62, 0));
     g.add(box(1.8, 0.7, 1.5, glass, 0, 1.3, 1.4));
     g.add(box(1.86, 0.5, 2.2, dark, 0, 1.05, -1.1)); // bed walls
     const crateMat = stdMat(0x9a7a3a, 0.9, 0.05);
     g.add(box(0.9, 0.7, 0.9, crateMat, -0.4, 1.45, -1.3));
     g.add(box(0.8, 0.6, 0.8, stdMat(0x3a6a9a, 0.9, 0.05), 0.45, 1.4, -0.8));
   } else if (isVan) {
-    g.add(box(1.78, 1.05, 3.1, glass, 0, 1.4, -0.2));
-    g.add(box(1.82, 0.14, 3.1, paint, 0, 1.95, -0.2)); // roof
+    g.add(extrude([[-2.2, 0.28], [-2.2, 1.9], [1.7, 1.9], [2.2, 1.5], [2.2, 0.28]], 1.9, paint));
+    g.add(extrude([[-1.9, 0.9], [-1.7, 1.85], [1.5, 1.85], [2.05, 1.45]], 1.7, glass));
   } else {
-    g.add(box(1.7, 0.62, 2.2, glass, 0, 1.28, -0.25));
-    g.add(box(1.5, 0.08, 1.0, paint, 0, 1.0, 1.55)); // hood
+    g.add(extrude([[-2.2, 0.28], [-2.2, 0.88], [1.6, 0.88], [2.2, 0.78], [2.2, 0.28]], 1.9, paint));
+    g.add(extrude([[-1.05, 0.86], [-0.85, 1.3], [0.65, 1.3], [1.35, 0.88]], 1.7, glass));
   }
   // Grille, bumpers, lights, mirrors.
   g.add(box(1.2, 0.22, 0.08, dark, 0, 0.62, len / 2 + 0.01));
@@ -124,7 +146,8 @@ function buildCarMesh(def) {
     g.add(box(0.7, 0.22, 0.4, signMat, 0, 1.72, -0.25));
   }
   // Dent patch: a dark crumpled hood panel, shown when condition < 60.
-  const dent = box(1.2, 0.06, 0.9, stdMat(0x222222, 1, 0), 0, 1.02, 1.5);
+  // (Stage 2: y 1.02 -> 0.9 — the extruded hood top is ~0.88, not 1.0.)
+  const dent = box(1.2, 0.06, 0.9, stdMat(0x222222, 1, 0), 0, 0.9, 1.5);
   dent.visible = false;
   g.add(dent);
 

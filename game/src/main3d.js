@@ -726,6 +726,16 @@ function stageShot(name) {
     cam.yaw = Math.PI;
     cam.pitch = 0.22;
     cam.dist = 2.5;
+  } else if (name === 'car') {
+    // Stage 2 car close-up: hero GT parked, camera on its west side so
+    // the extruded side profile (hood, windshield, roof) is in frame.
+    // The player is hidden so only the car is in frame.
+    const hero = vehicles.hero;
+    hero.x = 6; hero.z = 44; hero.heading = 0; hero.speed = 0;
+    player.x = 12; player.z = 44; player.yaw = -Math.PI / 2;
+    cam.yaw = -Math.PI / 2; cam.pitch = 0.3; cam.dist = 10;
+    hideChar = true;
+    char.group.visible = false;
   } else if (name === 'npc') {
     // Visual prototype NPC close-up: frame NPC[0] (the GLB female) from
     // the front. The NPC is parked at the open onfoot spot with speed 0
