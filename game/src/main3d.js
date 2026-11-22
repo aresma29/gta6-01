@@ -344,7 +344,8 @@ function stageShot(name) {
     player.x = 0; player.z = -140; player.heading = Math.PI; player.camYaw = Math.PI; player.camPitch = 0.55;
   } else if (name === 'beach') {
     // Dusk beach: player on the sand facing the sea (south), with an
-    // umbrella and the lifeguard stand in frame.
+    // umbrella and the lifeguard stand in frame and the ferris wheel's neon
+    // rim at the right edge.
     player.x = 24; player.z = 184; player.heading = 0; player.camYaw = 0; player.camPitch = 0.28;
   } else if (name === 'drive') {
     // Chase-cam: the player is IN the hero car, driving east on Coral Row,
@@ -368,12 +369,15 @@ function stageShot(name) {
     player.camYaw = car.heading; player.camPitch = 0.22;
     police.stageChase();
     // Traffic ahead on the road (the traffic update re-places the meshes
-    // from v.x/v.z each frame, so only the state needs staging).
+    // from v.x/v.z each frame, so only the state needs staging). The van is
+    // moved off the chase road so it cannot block the police cars.
     const traffic = vehicles.list.filter((v) => v.isTraffic);
     const taxi = traffic.find((v) => v.type === 'taxi');
-    if (taxi) { taxi.x = -3; taxi.z = 124; taxi.heading = 0; taxi.speed = 11; }
+    if (taxi) { taxi.x = -3; taxi.z = 168; taxi.heading = 0; taxi.speed = 11; }
     const sedan = traffic.find((v) => v.type === 'sedan');
-    if (sedan) { sedan.x = 5; sedan.z = 158; sedan.heading = 0; sedan.speed = 10; }
+    if (sedan) { sedan.x = 4; sedan.z = 182; sedan.heading = 0; sedan.speed = 10; }
+    const van = traffic.find((v) => v.type === 'van');
+    if (van) { van.x = -56; van.z = 120; van.heading = 0; van.speed = 9; }
     // Pedestrians on the sidewalks.
     npcs.place(0, 8, 112, Math.PI);
     npcs.place(1, -8, 130, 0);

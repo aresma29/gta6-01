@@ -415,12 +415,14 @@ export function createPolice(scene, city, vehicles) {
     return heli;
   }
   // Stage the chase: wanted 4, three police cars, the helicopter above-ahead.
+  // The two lead police cars sit in open lanes ahead (right, then left) so
+  // the chase-cam sees them clearly; the third closes in from behind.
   function stageChase() {
     setWanted(4);
     placeCarAt(0, -3, 82, 0, 24);
-    placeCarAt(1, 4, 138, 0, 20);
-    placeCarAt(2, -4, 168, 0, 18);
-    placeHeliAt(0, 26, 150);
+    placeCarAt(1, 5, 132, 0, 20);
+    placeCarAt(2, -5, 148, 0, 18);
+    placeHeliAt(0, 24, 158);
   }
   function reset() {
     for (let i = cars.length - 1; i >= 0; i--) removePoliceCar(cars[i]);

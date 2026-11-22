@@ -96,6 +96,54 @@ Branch `full-3d`; main untouched at 3cd30a68. Built in the recorded session (rec
 
 ### Estimated completion time (revised)
 - Stage 2 DONE (~1 h 10 min of build/test, 22 Nov ~15:05–16:15 WIB — faster than the 3–4 h estimate, because the Stage 1 architecture was reused).
-- Stage 3 (police + helicopter + NPCs + combat): ~4–5 h.
+- Stage 3 (police + helicopter + NPCs + combat): DONE 22 Nov ~17:00 WIB (see Stage 3 section below).
 - Stage 4 (missions + dense HUD live + audio + polish + final shots + check): ~3–4 h.
-- **Total remaining: ~7–9 h of build/test time.** Target: Stage 3 by ~01:00 WIB 23 Nov, Stage 4 by ~12:00 WIB 23 Nov — leaving the afternoon of 23 Nov + 24 Nov for the owner's review, the seal and the submit. Deadline 24 Nov 22:00 WIB.
+- **Total remaining: ~3–4 h of build/test time.** Target: Stage 4 by ~12:00 WIB 23 Nov — leaving the afternoon of 23 Nov + 24 Nov for the owner's review, the seal and the submit. Deadline 24 Nov 22:00 WIB.
+
+## Stage 3 — Police + helicopter + NPCs + combat + damage + neon landmarks (DONE 22 Nov ~17:00 WIB, commit 6f5e92c, pushed to `full-3d`)
+Branch `full-3d`; main untouched at 3cd30a68. Built in the recorded session (recording 01a20223-50e0-7635-8279-965cf036dbf3, still running). Visual reference used as the target: `~/workspace/makefun/gta6-01/reference-vice-bay.jpg` (a mood board only — NOT copied into the game or screenshots/).
+
+### Features completed
+- **Wanted level (0–5 stars):** heat 0–100 (20/star). Crimes: car theft +1, punch/assault +1 (3 s cooldown), pistol +2 (5 s cooldown), speeding >25 m/s within 30 m of a police car +1 (10 s cooldown). Decay: 1.5 heat/s after 8 s with no police within 45 m (~13 s per star). Stars update LIVE in the HUD.
+- **Police cars (2–3):** spawn on roads 60–90 m from the player the moment wanted rises (2 at 1–2 stars, 3 at 3+). Pursuit AI: steer at the player, chase slightly faster (target = player speed + 5, cap 30 m/s vs police max 32). Ram: on a car, bleed its speed ×0.6 + damage it + camera shake; on foot, 12 damage + 3 m knockback + the car reverses. When wanted clears, they stand down and drive away, then despawn. Flashing red/blue light bars (alternating emissive) + a flashing glow sprite above the roof. Black-and-white VBPD livery (black hood/trunk panels, grille, bumpers, glass).
+- **Helicopter (wanted ≥ 3):** white/navy VBPD helicopter (body, tail boom + fin, spinning main + tail rotors, blur disc, skids, searchlight housing). Follows 80 m ahead of the player and above the local rooftops (altitude = max(26, rooftop + 10), lerped) with a gentle sway, so the chase-cam sees it. **Spotlight:** a SpotLight + a visible additive cone + a bright pool circle on the ground, all tracking the player. Climbs away and despawns when wanted falls below 3.
+- **NPCs (8 pedestrians):** varied outfits/proportions (10 shirt colours, 5 pants, 5 skins, scale 0.92–1.08, 2 with hats). Walk the sidewalks (offset 8.5 m from road lines), flee from police chases (12 m) and moving cars (5 m), knocked down by punches/pistol (fall flat, get up, flee). Minimap pale dots.
+- **Combat:** punch (F) with the swing animation + hit at 0.3 of the swing; weapons FISTS / BAT / PISTOL, switched with Q (the HUD slots switch and reflect the equipped weapon; a bat + a pistol mesh appear in the player's right hand). Pistol: hitscan with a tracer line + muzzle flash, 45 m reach. SMG stays locked.
+- **Vehicle damage (real):** crashes −2 condition, car-car hits −1.5, police rams −1. Top speed scales with condition (55% at condition 5). Below 60 a dent patch appears on the hood; below 45 smoke pours from the hood (sprite pool); the HUD CAR row turns red below 45%.
+- **Neon landmarks:** a neon ferris wheel on the beach (0, 198 — pink emissive rim, 8 coloured cabins, rotating slowly), a vertical "VICE BAY" neon sign on the bank tower (south face), an "Ocean Drive" billboard by the beach road (sunset gradient + sun + sea, faces south so the chase-cam reads it). All textures canvas-generated.
+- **HUD layout (reference board):** minimap moved bottom-left and made circular; dispatch board moved top-right; controls hint moved bottom-centre; dialogue sits above the minimap. Money + stars top-left, speed bottom-right (as the reference).
+- **HUD is now live:** stars, dispatch board (named units + PURSUIT/STAND DOWN roles + live distances + AIR 1 HELICOPTER), weapon slots, CAR condition (red when damaged), Rico's warning line when wanted ≥ 3 ("The cops are all over you, Jax. Lose them — fast."). The stale mission line is fixed: "Steal a car, outrun the VBPD. Missions arrive in Stage 4."
+- **Wasted:** health ≤ 0 → respawn at the Hospital, health 100, wanted cleared, "WASTED" banner.
+- **Traffic variety:** 5 traffic cars now (sedan, taxi, van, sedan, truck) on 5 waypoint loops.
+- **Chase-cam lift:** when the helicopter is active the chase-cam pulls back 1 m and tilts up so the helicopter stays in frame.
+- **`?shot=chase` staging:** player in the SUNSET GT driving south on the central road at 22 m/s, wanted 4, two lead police cars in open lanes ahead (right then left), a third closing from behind, the helicopter above-ahead, traffic ahead, pedestrians on the sidewalks, the ferris wheel dead ahead.
+
+### Features TESTED (headless desktop Chromium, SwiftShader; test script `~/workspace/makefun/gta6-01/test-stage3.py`)
+- **43/43 checks PASS, 0 console/page errors, 0 warnings, 0 failed requests, 0 external requests (offline verified).**
+- Title loads; wanted 0 / no police / 8 NPCs at start; traffic 5 cars, 4 types incl. truck; NPCs walk (7/8 moved in 15 s).
+- Car theft → wanted 1; police spawns (2 cars); police closes in (63.6 → 58.3 m in 20 s).
+- setWanted(3) → helicopter appears, spotlight on, 3 police cars; HUD stars ★★★☆☆; dispatch shows UNIT 12/07/23 + AIR 1 with live distances.
+- Punch → NPC down, wanted 3 → 4. Q cycles FISTS → BAT → PISTOL → FISTS (HUD slots follow). Pistol at 10 m → NPC down.
+- Crash into the bank → condition 95 → 79–81. damagePlayerCar(60) → smoke puffs active (3), condition 17–21.
+- Health 0 → wasted respawn at the Hospital (hp 100, wanted 0). Minimap bottom-left + circular (50%). Mission text no longer stale.
+- All 5 staged shots reach `__shotReady` (onfoot, city, beach, chase, drive).
+- **Screenshots (all viewed, all ≤256 KiB):**
+  - `screenshots/1-onfoot.jpg` (80,143 B) — character on a plaza, lit-window buildings, a yellow taxi, circular minimap, new HUD layout.
+  - `screenshots/2-chase.jpg` (111,265 B) — **the hero shot: SUNSET GT centre at 74 KM/H, the helicopter above with its spotlight cone, a white police car ahead-right with a red flashing glow, the ferris wheel, 4 live stars, dispatch with 3 units + AIR 1, NPCs on the sidewalks** — captured from the staged chase.
+  - `screenshots/3-city.jpg` (104,563 B) — aerial dusk city: varied-height buildings, lit windows, roads, plaza fountain, the ferris wheel in the distance.
+  - `screenshots/4-beach.jpg` (87,098 B) — beach: lifeguard stand + umbrella + teal sea, character on the sand, the ferris wheel's neon rim at the right edge.
+  - Temp shots (viewed, NOT in the dossier): combat (NPC visibly falling after a punch, helicopter spotlight pool on the pavement) + damage (smoke) + billboard close-up (the "Ocean Drive" canvas texture renders correctly).
+- `shots.json` updated to the 4 shots (onfoot, chase, city, beach). **The superseded `2-drive.jpg` was removed from the repo** (it lives in git history at ee2c8ab) — the dossier caps at 4 screenshots and the chase shot replaces it.
+- **Kit check: 4 passed, 0 failed, 17 skipped** (transcripts run on the server). **main.ts writes a valid dossier.json** (schema makefun/dossier/v1, cover 0, 4 images, text 145,467 bytes of the 163,840 cap).
+
+### Errors / obstacles found (all fixed)
+1. **Weapon-switch test flaked (3 checks):** the full test used fixed 1 s sleeps after pressing Q, but the game runs at ~1 FPS under SwiftShader, so no frame had consumed the key flag yet. The game code was correct — a focused poll-based re-test passed 8/8 (Q → BAT → PISTOL → FISTS, pistol downs an NPC at 10 m). Fixed the test to poll (up to 60 s) instead of sleeping; the full suite then passed 43/43.
+2. **Dossier failed on `screenshots.max`:** the repo held 5 screenshots (the old 2-drive.jpg plus the new 2-chase.jpg). Fixed by removing the superseded 2-drive.jpg; the dossier then built cleanly.
+3. **Chase shot v1: police cars not identifiable:** the lead police car was hidden behind the traffic van and the helicopter was at the frame's top edge. Fixed by re-staging (lead police cars in open lanes ahead, the van moved off the chase road, the helicopter lower/farther at (0, 24, 158)) — v2 shows the helicopter + a white police car with its red glow clearly.
+4. **Beach shot re-stage made it worse:** facing the ferris wheel from (48, 186) put its support legs dead centre. Reverted to the original (24, 184) facing south — umbrella + lifeguard stand + sea + the wheel's rim at the edge.
+5. **Billboard looked dark in the chase shot:** verified with a close-up — the canvas texture renders correctly (sunset gradient + "OCEAN DRIVE" + "VICE BAY · SUNSET STRIP"); it only reads dark at 80 m in the dusk. No fix needed.
+
+### Features NOT yet done (Stage 4)
+- **Stage 4 — Missions + polish:** 4 story missions (First Wheels, Package Run, Rival Turf, The Big Score) with markers + timers + rewards, money changing on rewards, day/night polish, audio (engine, siren, effects — the audio module already exists, it is not wired in), final 4 screenshots (the chase shot is already the hero), README update, kit check, commit + push.
+- **Not verified in real time (logic reviewed, noted honestly):** wanted decay (~13 s per star in game time) and the escape behaviour — SwiftShader runs at ~0.05× real time, so a decay cycle would take ~4 minutes of wall time per star; the decay code path (heat, unseen distance, grace period) was verified by reading, not by a live wait. The helicopter's rooftop clearance (altitude = rooftop + 10) is computed from the building list and was verified in the chase shot (the helicopter flew above the market-district roofs).
+- **Still a weakness vs Top 10:** no missions yet (Stage 4), the HUD mission panel is a free-roam placeholder, no audio yet, the chase shot has no police car directly behind the player car (the chase-cam looks forward — the reference shows the same), and our 3D is still low-poly/stylised vs the reference board's rendered look. The density gap is now much smaller: helicopter + 3 police + traffic + NPCs + ferris wheel + neon + live dense HUD are all in one frame.
