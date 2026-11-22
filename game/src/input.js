@@ -1,53 +1,71 @@
-// Keyboard and pointer input. Held keys give a steering direction; one-shot presses (start or
-// restart, pause) are queued as bit flags and taken once by the loop, so a press between two
-// frames is never lost and never counted twice.
+// Keyboard input: tracks which physical keys are held and which were just
+// pressed this frame (so a tap on E or Space fires once, not every frame).
 
-export const ACTION_CONFIRM = 1;
-export const ACTION_PAUSE = 2;
+import { KEYS } from './config.js';
 
-const LEFT = new Set(['ArrowLeft', 'KeyA']);
-const RIGHT = new Set(['ArrowRight', 'KeyD']);
-const CONFIRM = new Set(['Space', 'Enter']);
-const PAUSE = new Set(['KeyP', 'Escape']);
+const held = new Set();
+const pressed = new Set();
+let anyKey = false;
 
-export function createInput(target) {
-  let left = false;
-  let right = false;
-  let actions = 0;
+function codeOf(event) {
+  return event.code;
+}
 
+export function initInput() {
   window.addEventListener('keydown', (event) => {
-    if (LEFT.has(event.code)) left = true;
-    else if (RIGHT.has(event.code)) right = true;
-    else if (CONFIRM.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_CONFIRM;
-    } else if (PAUSE.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_PAUSE;
-    } else return;
-    event.preventDefault();
+    if (event.repeat) return;
+    held.add(codeOf(event));
+    pressed.add(codeOf(event));
+    anyKey = true;
+    // Space scrolls the page; the game owns it.
+    if (event.code === 'Space') event.preventDefault();
   });
   window.addEventListener('keyup', (event) => {
-    if (LEFT.has(event.code)) left = false;
-    else if (RIGHT.has(event.code)) right = false;
+    held.delete(codeOf(event));
   });
-  // A key released while the tab is hidden never sends keyup: let go of everything on blur.
   window.addEventListener('blur', () => {
-    left = false;
-    right = false;
+    held.clear();
   });
-  target.addEventListener('pointerdown', () => {
-    actions |= ACTION_CONFIRM;
-  });
+}
 
-  return {
-    /** -1 for left, 1 for right, 0 for neither or both. */
-    direction() {
-      return (right ? 1 : 0) - (left ? 1 : 0);
-    },
-    /** The one-shot presses since the last call, as ACTION_* flags. */
-    takeActions() {
-      const taken = actions;
-      actions = 0;
-      return taken;
-    },
-  };
+/** True while any of the codes in `list` is held down. */
+export function isHeld(list) {
+  for (let i = 0; i < list.length; i += 1) {
+    if (held.has(list[i])) return true;
+  }
+  return false;
+}
+
+/** True only on the frame the key went down (consumed by endFrame). */
+export function wasPressed(list) {
+  for (let i = 0; i < list.length; i += 1) {
+    if (pressed.has(list[i])) return true;
+  }
+  return false;
+}
+
+/** True if the player pressed any key since the last frame. */
+export function anyPressed() {
+  return anyKey;
+}
+
+/** Clear the just-pressed set; call once per frame after the update. */
+export function endFrame() {
+  pressed.clear();
+  anyKey = false;
+}
+
+/** Movement axes from the held keys: x in [-1, 1], y in [-1, 1]. */
+export function moveAxes() {
+  let x = 0;
+  let y = 0;
+  if (isHeld(KEYS.left)) x -= 1;
+  if (isHeld(KEYS.right)) x += 1;
+  if (isHeld(KEYS.up)) y -= 1;
+  if (isHeld(KEYS.down)) y -= 1;
+  if (x !== 0 && y !== 0) {
+    x *= Math.SQRT1_2;
+    y *= Math.SQRT1_2;
+  }
+  return { x, y };
 }
