@@ -557,3 +557,66 @@ The old Stage 2–4 modules were removed from the repo in this commit (they live
 - No real GLB car models were sourced (Kenney download is browser-only). The cars are improved procedural models, not GLB assets. If Mot wants GLB cars, that needs a browser download or a different mirror.
 - Only the car BODY/CABIN changed; the wheels, lights, and details are the same procedural parts. The truck is still boxy (by design — a utility vehicle).
 - The `?shot=car` staged shot is verification-only (not a dossier shot); it costs dossier bytes (it is in `game/src/main3d.js`). It can be removed before submission to reclaim ~400 bytes if needed.
+
+## Final Audit — Provisional Final Candidate (DONE 22 Nov ~21:30 WIB)
+
+**Context:** Mot STOPPED further visual work (no city/beach). The current version on branch `visual-prototype` (HEAD 7572a84) is the PROVISIONAL FINAL CANDIDATE. This audit verified it end-to-end. No new features or visual code were added. No seal, no submit.
+
+### Consolidation (verified)
+- Branch `visual-prototype`, HEAD `7572a84`, pushed to origin, tree clean. History is linear (each commit has 1 parent):
+  - `5d5aeaa` — Rebuild-v3 Stage 4: missions + audio + polish + hero fix + police backout (55/55)
+  - `0aff3f6` — Visual prototype: rigged GLB character + NPC (CC0 Quaternius), GLTFLoader vendored (55/55)
+  - `d81f7c9` — Visual Stage 2a: lighting — face visible at dusk + night (55/55)
+  - `7572a84` — Visual Stage 2b: cars — extruded side-profile bodies (55/55)
+- Checkpoints untouched: `full-3d-v2` = `checkpoint/stage4` = `5d5aeaa`; `checkpoint/visual-character` = `0aff3f6`; `main` = `backup/vice-bay-2d` = `3cd30a68` (the submitted backup entry 01a202a7, dev grade 980,836).
+- Backup branch for this audit: `checkpoint/final-candidate` (at the audit commit, pushed).
+
+### Dossier limits (verified, fresh run)
+- Dossier valid: schema makefun/dossier/v1, 4 images, text **162,238 bytes of the 163,840 cap — headroom only 1,602 bytes**. Total dossier 717,171 bytes.
+- Repo total 16 MB (game 5.8 MB incl. GLB assets 3.4 MB + vendor 2.3 MB; screenshots 408 KB; screenshots-visual 748 KB; .git 8.5 MB) — well under the 64 MB cap. **The TEXT cap (1,602 bytes headroom) is the binding constraint, not the total size.**
+- **Kit check: 4 passed, 0 failed, 17 skipped, 5 checked at submission** (the 5 are repo/submission items the site checks at submit time).
+
+### Complete test (final audit re-run, headless Chromium 1255, SwiftShader, 1280×720)
+- **55/55 checks PASS, 0 console errors, 0 page errors, 0 failed requests, 0 external requests (offline verified).** Test script `~/workspace/makefun/gta6-01/test-rebuild-stage4-v3.py`, full log `/tmp/final-audit-test.log`.
+- **Measured:** title loads; START → playing; M1 auto-starts (BEACH RUN); walk 4.06 m/s; run 8.33 m/s; jump apex 1.15 m + lands; save/load round-trips (restores (40, −80)); **M1 BEACH RUN +$100 ($250→$350), M2 PACKAGE RUN +$150 ($350→$500), M3 LOSE THE HEAT +$200 ($500→$700), M4 CHECKPOINT DASH +$250 ($700→$950) — all 4 missions done, HUD shows "MISSION COMPLETE — CHECKPOINT DASH +$250"**; NPCs 10 (≥8); E enters car; car theft → wanted=1; police spawns at 70 m and closes 70→69 m; car accelerates to 22 KM/H; E exits car; helicopter at 3 stars (follows 27.3 m, heli y=32); 3 police cars at 3 stars; dispatch shows AIR 1 (VBPD-07 PURSUIT 66 m, VBPD-12 PURSUIT 70 m, VBPD-23 PURSUIT 61 m); Q cycles FISTS→BAT→PISTOL→FISTS; **punch hits an NPC at (−15.2, −69.3) on attempt 1, NPC knocked down (down 0→1)**; pistol equipped + hits a target; wanted rises to 3.
+- **Audio:** context exists, state `running`, mute toggles False → True → False.
+- **FPS meter reports 0** (SwiftShader, this run; it was 1 in the Stage 4 run — the meter fluctuates between 0 and 1 under SwiftShader). This verifies correctness, NOT real-hardware FPS.
+- **The 5 checks from the Stage 3 salvage:** (a) walk PASS 4.06 m/s, (b) E enters car PASS, (c) car-theft wanted PASS (wanted=1), (d) punch PASS (hits NPC, knocked down), (e) police ram NOT VERIFIED (see below).
+
+### GLB assets + offline (verified)
+- Both GLBs exist locally in `game/assets/`: `Casual_Male.glb` (1,752,060 B) + `Casual_Female.glb` (1,759,956 B), CC0 1.0 (Quaternius "Ultimate Animated Characters"), licenses + source URLs in `game/assets/LICENSES.md`. GLTFLoader + utils MIT (three.js r187). No GTA V asset used or copied.
+- **No external URL references in the game code** (grep for http/https in game/src/ + index.html returns nothing except localhost). Both GLBs load from local relative paths (`./assets/Casual_Male.glb`, `./assets/Casual_Female.glb`) with HTTP 200. **0 external requests in the full test (offline verified).** All 14 JS files pass `node --check`.
+
+### Screenshots (final 4 dossier shots — kept, re-taken by the audit test, all viewed, all ≤256 KiB)
+- `screenshots/1-onfoot.jpg` (72,139 B) — GLB Jax front-on, face clearly visible (lighting fix), Downtown, 0 KM/H.
+- `screenshots/2-chase.jpg` (123,058 B) — **HERO: red SUNSET GT chase-cam at 70 KM/H, 4 stars, WHITE POLICE CAR alongside (VBPD-07 PURSUIT 10 m) + dispatch VBPD-07/12/23/31 + AIR 1, helicopter spotlight cone, ferris wheel, "WANTED — Lose the VBPD", Rico warning.**
+- `screenshots/3-city.jpg` (148,659 B) — aerial dusk city, lit windows, VICE BAY neon sign, plaza fountain.
+- `screenshots/4-beach.jpg` (68,118 B) — GLB Jax on sand, teal sea + sun glow, palm.
+- **Decision:** the 4 dossier shots were KEPT (not replaced). They already reflect the final candidate (GLB character + lighting + extruded cars) and cover character / chase / city / beach. The visual shots (`screenshots-visual/`, 10 files, 748 KB) are kept as extras (before/after character, lighting dusk/night, car side/chase/drive/onfoot) — they are NOT in the dossier.
+- `shots.json` unchanged (4 entries: onfoot, chase, city, beach).
+
+### Cleanup (verified — NOTHING deleted)
+- **No debug/test files inside the repo** (no .py/.log/.tmp/.bak files). File types: 19 js, 14 jpg, 4 md, 3 ts, 2 json, 2 glb, 1 html, 2 LICENSE. All are legitimate game/docs files.
+- `screenshots-visual/` (748 KB) kept as evidence of the visual work — the repo is 16 MB, well under the 64 MB cap, so there is no pressure to delete it.
+- The test/probe scripts (`test-*.py`, `probe-*.py`) live OUTSIDE the repo in `~/workspace/makefun/gta6-01/` and do not affect the dossier — left untouched.
+
+### Remaining shortcomings (honest list)
+- **Police ram / on-foot pathfinding NOT verified:** police have no pathfinding — when the player is on foot and a building blocks the direct path, a police car drives into the building and gets stuck (the Stage 4 backout makes it reverse + retry, but it does not get around a building). On-foot rams remain unverified. The chase on roads IS verified (police close 70→69 m while the player drives; the hero shows a cruiser alongside).
+- **Cars are extruded profiles, not GLB models:** GLB car sourcing was attempted but blocked (Kenney download is browser-only). The cars look clearly better than the old boxes, but they are not detailed GLB models.
+- **City is still procedural boxes with lit windows:** no facade variation, no street props, no beach/market detail beyond what Stage 1 built. The beach shot's sand foreground is still a wide empty expanse.
+- **Only 1 of 10 NPCs is a GLB** (NPC[0] female); the other 9 are procedural. No uniformed police GLB models.
+- **1-onfoot shot is darker than Stage 2** (dusk lighting, noted, not a defect).
+- **FPS under SwiftShader is 0–1** — this verifies correctness only; real-hardware FPS is UNVERIFIED (the VM has no GPU).
+- **Dossier text headroom is only 1,602 bytes** — no further code can be added without exceeding the cap (the `?shot=car` verification-only staged shot, ~400 bytes, can be removed before submission to reclaim headroom if needed).
+
+### Submission risks (honest list)
+- **Transcript gate (the big one):** the Stage 4 + visual code was written in UNRECORDED sessions (the recorder PID 8575 / recording 01a202e0 died ~18:50 WIB when the VM was replaced). Stages 1–3 were written under recording 01a202e0 (witnessed); Stage 4 (missions.js, audio.js, police backout, main3d.js edits) + the visual stages (glbCharacter.js, lighting, cars) were NOT witnessed. The transcript gate allows ≤40% unwritten and requires ≥30% authored — the unwitnessed code is a minority of the total, so it should pass, but the server verdict at submit is authoritative and cannot be verified locally (the kit check skips the transcript checks locally).
+- **Dossier text cap:** 1,602 bytes of headroom. Any further code addition (even a small fix) risks exceeding the cap. Do NOT add code after this audit without re-checking the dossier.
+- **The VM has been replaced 3 times** (~15:30, ~17:10, ~18:50, roughly every ~100 min). A replacement during the seal/submit would kill the process — the seal + submit must be done promptly once Mot approves, and the recorder state file must be intact.
+- **The recording 01a202e0 is unsealed** and its state file persists (seq 231, acked 1397). It must be sealed via `record --finish` before submitting — and only with Mot's approval.
+- **The backup entry (01a202a7, dev grade 980,836) is already submitted and scored.** Submitting the new version (Force_Last) will replace it as the entry that counts. If the new submission is rejected (e.g. transcript gate), the backup may or may not still stand — the parent should confirm the Force_Last + rejection behavior before submitting.
+- **Judge score is unknowable in advance:** the backup scored 980,836 (below the paid line 992,703, gap 11,867). This version adds missions + audio + GLB character + lighting + better cars, which should help, but there is no guarantee it beats 992,703. The dev grade is only a pass gate; the final heat decides.
+
+### Audit outcome
+- **The provisional final candidate is VERIFIED and ready for Mot's submission decision.** 55/55 tests pass, dossier valid + under both caps, kit check passes, all checkpoints + backup untouched, no seal, no submit.
+- **Do NOT change the candidate after this audit** (no new features, no new visual code) without reporting to Mot and getting his approval.
