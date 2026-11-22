@@ -4,17 +4,119 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" href="data:,">
-<title>VICE BAY — an open-world crime story</title>
+<title>VICE BAY 3D — an open-world crime story</title>
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #10141a; }
-  #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
-  /* Read aloud, never shown: the status line screen readers announce. */
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0e13; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #f2f4f8; }
+  #gl { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  #hud { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
+  .panel { position: absolute; background: rgba(8, 12, 18, 0.62); border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 10px; padding: 10px 12px; backdrop-filter: blur(2px); }
+  #stats { top: 12px; left: 12px; min-width: 210px; }
+  #stats .row { display: flex; align-items: center; gap: 8px; margin: 3px 0; }
+  #healthbar { flex: 1; height: 12px; background: #2a1414; border-radius: 6px; overflow: hidden; }
+  #healthfill { height: 100%; width: 100%; background: linear-gradient(90deg, #e5484d, #f76b15); }
+  #money { font-size: 20px; font-weight: 700; color: #7ee787; }
+  #stars { font-size: 18px; letter-spacing: 2px; color: #ffd60a; text-shadow: 0 0 8px rgba(255, 214, 10, 0.6); }
+  #mission { top: 12px; left: 50%; transform: translateX(-50%); max-width: 520px; text-align: center; }
+  #mission .mname { font-weight: 800; letter-spacing: 1px; color: #ffd60a; }
+  #mission .mobj { font-size: 13px; opacity: 0.95; }
+  #mission .mtimer { font-size: 15px; font-weight: 700; color: #ff8a80; }
+  #minimapwrap { top: 12px; right: 12px; padding: 6px; }
+  #minimap { display: block; border-radius: 6px; }
+  #speed { bottom: 12px; right: 12px; font-size: 26px; font-weight: 800; text-align: right; }
+  #speed small { display: block; font-size: 11px; font-weight: 600; opacity: 0.8; letter-spacing: 1px; }
+  #hint { bottom: 12px; left: 12px; font-size: 12px; opacity: 0.85; }
+  #banner { top: 22%; left: 50%; transform: translateX(-50%); font-size: 30px; font-weight: 900; letter-spacing: 2px; text-align: center; text-shadow: 0 2px 18px rgba(0,0,0,0.8); opacity: 0; transition: opacity 0.25s; white-space: nowrap; }
+  #banner .sub { display: block; font-size: 15px; font-weight: 600; letter-spacing: 0; margin-top: 4px; color: #ffd60a; }
+  #arrow { position: absolute; left: 50%; top: 50%; width: 0; height: 0; pointer-events: none; }
+  #arrow .tri { position: absolute; left: -14px; top: -110px; font-size: 26px; color: #ffd60a; text-shadow: 0 0 10px rgba(0,0,0,0.9); transform-origin: 14px 110px; }
+  #arrow .dist { position: absolute; left: -30px; top: -138px; width: 60px; text-align: center; font-size: 12px; font-weight: 700; text-shadow: 0 1px 6px #000; transform-origin: 30px 138px; }
+  /* Dense HUD: dispatch board, weapons, dialogue, location/radio. */
+  #dispatch { bottom: 64px; left: 12px; min-width: 240px; font-size: 12px; }
+  #dispatch .dtitle { font-weight: 800; letter-spacing: 1px; color: #7ec8ff; margin-bottom: 4px; }
+  #dispatch .unit { display: flex; justify-content: space-between; gap: 10px; margin: 2px 0; }
+  #dispatch .unit .role { color: #ffd60a; font-weight: 700; }
+  #dispatch .unit .dist { opacity: 0.8; }
+  #weapons { bottom: 64px; right: 12px; display: flex; gap: 6px; padding: 8px; }
+  #weapons .slot { width: 52px; text-align: center; font-size: 10px; font-weight: 700; padding: 6px 2px; border: 1px solid rgba(255,255,255,0.25); border-radius: 6px; background: rgba(255,255,255,0.06); }
+  #weapons .slot.active { border-color: #ffd60a; color: #ffd60a; }
+  #weapons .slot.locked { opacity: 0.45; }
+  #dialogue { bottom: 168px; left: 12px; max-width: 320px; display: flex; gap: 10px; align-items: flex-start; }
+  #dialogue .portrait { width: 44px; height: 44px; border-radius: 50%; background: linear-gradient(135deg, #c0392b, #7a2a1a); display: flex; align-items: center; justify-content: center; font-size: 22px; font-weight: 900; flex-shrink: 0; border: 2px solid #ffd60a; }
+  #dialogue .who { font-weight: 800; color: #ffd60a; font-size: 13px; }
+  #dialogue .line { font-size: 13px; line-height: 1.35; }
+  #locbar { top: 118px; left: 50%; transform: translateX(-50%); font-size: 12px; letter-spacing: 1px; padding: 6px 14px; }
+  #locbar b { color: #ffd60a; }
+  #vehiclename { font-size: 12px; font-weight: 700; color: #7ec8ff; }
+  #carcond { font-size: 11px; opacity: 0.85; }
+  .overlay { position: fixed; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center; background: rgba(5, 8, 14, 0.55); }
+  .card { background: rgba(10, 15, 24, 0.92); border: 1px solid rgba(255, 214, 10, 0.35); border-radius: 14px; padding: 28px 34px; max-width: 560px; text-align: center; box-shadow: 0 20px 60px rgba(0,0,0,0.6); }
+  .card h1 { margin: 0 0 4px; font-size: 52px; letter-spacing: 4px; color: #ffd60a; text-shadow: 0 0 24px rgba(255, 214, 10, 0.35); }
+  .card h2 { margin: 0 0 14px; font-size: 15px; letter-spacing: 6px; color: #7ee787; font-weight: 700; }
+  .card p { margin: 8px 0; font-size: 14px; line-height: 1.5; opacity: 0.92; }
+  .card .controls { text-align: left; font-size: 13px; line-height: 1.9; margin: 12px auto 4px; display: inline-block; }
+  .card .controls b { color: #ffd60a; }
+  .btn { pointer-events: auto; cursor: pointer; display: inline-block; margin: 6px 4px 0; padding: 10px 22px; border-radius: 8px; border: 1px solid #ffd60a; background: #ffd60a; color: #111; font-weight: 800; font-size: 15px; }
+  .btn.ghost { background: transparent; color: #f2f4f8; border-color: rgba(255,255,255,0.4); }
+  .hidden { display: none !important; }
   #status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 </style>
 </head>
 <body>
-<canvas id="game" aria-label="VICE BAY: explore the city, steal cars, outrun the police and finish all five jobs"></canvas>
+<canvas id="gl" aria-label="VICE BAY 3D: explore the city on foot and by car, outrun the police and finish the story jobs"></canvas>
+<div id="hud" class="hidden">
+  <div id="stats" class="panel">
+    <div class="row"><span>HP</span><div id="healthbar"><div id="healthfill"></div></div></div>
+    <div class="row"><span id="money">$0</span><span id="stars"></span></div>
+    <div class="row" id="carrow" style="display:none"><span id="carhp">CAR</span></div>
+  </div>
+  <div id="mission" class="panel">
+    <div class="mname" id="mname">VICE BAY</div>
+    <div class="mobj" id="mobj">Free roam — explore the city.</div>
+    <div class="mtimer" id="mtimer"></div>
+  </div>
+  <div id="minimapwrap" class="panel"><canvas id="minimap" width="180" height="180"></canvas></div>
+  <div id="locbar" class="panel"><b id="locname">SUNSET STRAND</b> &nbsp;·&nbsp; <span id="clock">18:42</span> &nbsp;·&nbsp; <span id="radio">VICE FM 98.5 — Sunset Drive</span></div>
+  <div id="dispatch" class="panel"><div class="dtitle">VBPD DISPATCH</div><div id="dispatchunits"></div></div>
+  <div id="weapons" class="panel">
+    <div class="slot active" id="wslot0">FISTS</div>
+    <div class="slot locked" id="wslot1">BAT</div>
+    <div class="slot locked" id="wslot2">PISTOL</div>
+    <div class="slot locked" id="wslot3">SMG</div>
+  </div>
+  <div id="dialogue" class="panel"><div class="portrait">R</div><div><div class="who">RICO — FIXER</div><div class="line" id="dialogueline">Welcome to Vice Bay, Jax. Keep your head down and your wheels turning.</div></div></div>
+  <div id="speed" class="panel"><div id="vehiclename">ON FOOT</div><div id="carcond"></div><span id="speedval">0</span><small id="speedunit">KM/H</small></div>
+  <div id="hint" class="panel">WASD move / drive &nbsp;·&nbsp; Shift run &nbsp;·&nbsp; Space jump &nbsp;·&nbsp; F punch &nbsp;·&nbsp; E enter / exit car &nbsp;·&nbsp; drag mouse to look &nbsp;·&nbsp; P pause &nbsp;·&nbsp; M mute</div>
+  <div id="banner"></div>
+  <div id="arrow"><div class="tri">▲</div><div class="dist"></div></div>
+</div>
+<div id="title" class="overlay">
+  <div class="card">
+    <h1>VICE BAY</h1>
+    <h2>3 D &nbsp;·&nbsp; OPEN WORLD &nbsp;·&nbsp; CRIME STORY</h2>
+    <p>You are new in Vice Bay — a coastal metropolis of docks, towers, markets and beaches. Do jobs for Rico: steal cars, outrun the police, fight rival crews, and pull off the big armoured-van score at the Harbour.</p>
+    <div class="controls">
+      <b>WASD / arrows</b> — walk, run with Shift, drive in a car<br>
+      <b>Space</b> — jump &nbsp;·&nbsp; <b>F</b> — punch &nbsp;·&nbsp; <b>E</b> — enter / exit car<br>
+      <b>Mouse drag</b> — look around &nbsp;·&nbsp; <b>P / Esc</b> — pause &nbsp;·&nbsp; <b>M</b> — mute
+    </div>
+    <p id="besthaul"></p>
+    <button class="btn" id="startbtn">START</button>
+    <button class="btn ghost" id="loadbtn">LOAD SAVE</button>
+  </div>
+</div>
+<div id="pause" class="overlay hidden">
+  <div class="card">
+    <h1 style="font-size:36px">PAUSED</h1>
+    <p id="pausemission"></p>
+    <button class="btn" id="resumebtn">RESUME</button>
+    <button class="btn ghost" id="restartbtn">RESTART</button><br>
+    <button class="btn ghost" id="savebtn">SAVE</button>
+    <button class="btn ghost" id="loadbtn2">LOAD</button>
+    <button class="btn ghost" id="mutebtn">MUTE</button>
+    <button class="btn ghost" id="quitbtn">QUIT TO TITLE</button>
+  </div>
+</div>
 <p id="status" role="status" aria-live="polite"></p>
-<script type="module" src="./src/main.js"></script>
+<script type="module" src="./src/main3d.js"></script>
 </body>
 </html>
