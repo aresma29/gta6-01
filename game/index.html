@@ -20,18 +20,18 @@
   #mission .mname { font-weight: 800; letter-spacing: 1px; color: #ffd60a; }
   #mission .mobj { font-size: 13px; opacity: 0.95; }
   #mission .mtimer { font-size: 15px; font-weight: 700; color: #ff8a80; }
-  #minimapwrap { top: 12px; right: 12px; padding: 6px; }
-  #minimap { display: block; border-radius: 6px; }
+  #minimapwrap { bottom: 12px; left: 12px; padding: 6px; border-radius: 50%; overflow: hidden; }
+  #minimap { display: block; border-radius: 50%; }
   #speed { bottom: 12px; right: 12px; font-size: 26px; font-weight: 800; text-align: right; }
   #speed small { display: block; font-size: 11px; font-weight: 600; opacity: 0.8; letter-spacing: 1px; }
-  #hint { bottom: 12px; left: 12px; font-size: 12px; opacity: 0.85; }
+  #hint { bottom: 12px; left: 50%; transform: translateX(-50%); font-size: 12px; opacity: 0.85; white-space: nowrap; }
   #banner { top: 22%; left: 50%; transform: translateX(-50%); font-size: 30px; font-weight: 900; letter-spacing: 2px; text-align: center; text-shadow: 0 2px 18px rgba(0,0,0,0.8); opacity: 0; transition: opacity 0.25s; white-space: nowrap; }
   #banner .sub { display: block; font-size: 15px; font-weight: 600; letter-spacing: 0; margin-top: 4px; color: #ffd60a; }
   #arrow { position: absolute; left: 50%; top: 50%; width: 0; height: 0; pointer-events: none; }
   #arrow .tri { position: absolute; left: -14px; top: -110px; font-size: 26px; color: #ffd60a; text-shadow: 0 0 10px rgba(0,0,0,0.9); transform-origin: 14px 110px; }
   #arrow .dist { position: absolute; left: -30px; top: -138px; width: 60px; text-align: center; font-size: 12px; font-weight: 700; text-shadow: 0 1px 6px #000; transform-origin: 30px 138px; }
   /* Dense HUD: dispatch board, weapons, dialogue, location/radio. */
-  #dispatch { bottom: 64px; left: 12px; min-width: 240px; font-size: 12px; }
+  #dispatch { top: 12px; right: 12px; min-width: 240px; font-size: 12px; }
   #dispatch .dtitle { font-weight: 800; letter-spacing: 1px; color: #7ec8ff; margin-bottom: 4px; }
   #dispatch .unit { display: flex; justify-content: space-between; gap: 10px; margin: 2px 0; }
   #dispatch .unit .role { color: #ffd60a; font-weight: 700; }
@@ -40,7 +40,7 @@
   #weapons .slot { width: 52px; text-align: center; font-size: 10px; font-weight: 700; padding: 6px 2px; border: 1px solid rgba(255,255,255,0.25); border-radius: 6px; background: rgba(255,255,255,0.06); }
   #weapons .slot.active { border-color: #ffd60a; color: #ffd60a; }
   #weapons .slot.locked { opacity: 0.45; }
-  #dialogue { bottom: 168px; left: 12px; max-width: 320px; display: flex; gap: 10px; align-items: flex-start; }
+  #dialogue { bottom: 214px; left: 12px; max-width: 320px; display: flex; gap: 10px; align-items: flex-start; }
   #dialogue .portrait { width: 44px; height: 44px; border-radius: 50%; background: linear-gradient(135deg, #c0392b, #7a2a1a); display: flex; align-items: center; justify-content: center; font-size: 22px; font-weight: 900; flex-shrink: 0; border: 2px solid #ffd60a; }
   #dialogue .who { font-weight: 800; color: #ffd60a; font-size: 13px; }
   #dialogue .line { font-size: 13px; line-height: 1.35; }
@@ -85,7 +85,7 @@
   </div>
   <div id="dialogue" class="panel"><div class="portrait">R</div><div><div class="who">RICO — FIXER</div><div class="line" id="dialogueline">Welcome to Vice Bay, Jax. Keep your head down and your wheels turning.</div></div></div>
   <div id="speed" class="panel"><div id="vehiclename">ON FOOT</div><div id="carcond"></div><span id="speedval">0</span><small id="speedunit">KM/H</small></div>
-  <div id="hint" class="panel">WASD move / drive &nbsp;·&nbsp; Shift run &nbsp;·&nbsp; Space jump &nbsp;·&nbsp; F punch &nbsp;·&nbsp; E enter / exit car &nbsp;·&nbsp; drag mouse to look &nbsp;·&nbsp; P pause &nbsp;·&nbsp; M mute</div>
+  <div id="hint" class="panel">WASD move / drive &nbsp;·&nbsp; Shift run &nbsp;·&nbsp; Space jump &nbsp;·&nbsp; F punch / shoot &nbsp;·&nbsp; Q weapon &nbsp;·&nbsp; E enter / exit car &nbsp;·&nbsp; drag mouse to look &nbsp;·&nbsp; P pause &nbsp;·&nbsp; M mute</div>
   <div id="banner"></div>
   <div id="arrow"><div class="tri">▲</div><div class="dist"></div></div>
 </div>
@@ -96,7 +96,7 @@
     <p>You are new in Vice Bay — a coastal metropolis of docks, towers, markets and beaches. Do jobs for Rico: steal cars, outrun the police, fight rival crews, and pull off the big armoured-van score at the Harbour.</p>
     <div class="controls">
       <b>WASD / arrows</b> — walk, run with Shift, drive in a car<br>
-      <b>Space</b> — jump &nbsp;·&nbsp; <b>F</b> — punch &nbsp;·&nbsp; <b>E</b> — enter / exit car<br>
+      <b>Space</b> — jump &nbsp;·&nbsp; <b>F</b> — punch / shoot &nbsp;·&nbsp; <b>Q</b> — switch weapon &nbsp;·&nbsp; <b>E</b> — enter / exit car<br>
       <b>Mouse drag</b> — look around &nbsp;·&nbsp; <b>P / Esc</b> — pause &nbsp;·&nbsp; <b>M</b> — mute
     </div>
     <p id="besthaul"></p>

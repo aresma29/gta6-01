@@ -46,6 +46,7 @@ export const ACT_PUNCH = 2;
 export const ACT_ENTER = 4;
 export const ACT_PAUSE = 8;
 export const ACT_CONFIRM = 16;
+export const ACT_WEAPON = 32; // KeyQ: cycle weapon (fists -> bat -> pistol)
 
 const MOVE_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
 const RUN_KEYS = new Set(['ShiftLeft', 'ShiftRight']);
@@ -61,6 +62,7 @@ export function createInput(canvas) {
     if (e.code === 'Space') { if (!e.repeat) actions |= ACT_JUMP; e.preventDefault(); }
     else if (e.code === 'KeyF') { if (!e.repeat) actions |= ACT_PUNCH; }
     else if (e.code === 'KeyE') { if (!e.repeat) actions |= ACT_ENTER; }
+    else if (e.code === 'KeyQ') { if (!e.repeat) actions |= ACT_WEAPON; }
     else if (e.code === 'KeyP' || e.code === 'Escape') { if (!e.repeat) actions |= ACT_PAUSE; }
     else if (e.code === 'Enter') { if (!e.repeat) actions |= ACT_CONFIRM; }
     held.add(e.code);

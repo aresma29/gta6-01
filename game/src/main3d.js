@@ -8,7 +8,12 @@ import { buildCityDetails } from './citydetails.js';
 import { makeHumanoid, poseHumanoid } from './actors.js';
 import { makeCharacter, poseCharacter } from './character.js';
 import { createVehicles } from './vehicles.js';
-import { createInput, ACT_JUMP, ACT_PAUSE, ACT_CONFIRM, clamp, lerp, lerpAngle, angleDiff } from './util.js';
+import { createPolice } from './police.js';
+import { createNPCs } from './npcs.js';
+import { createCombat } from './combat.js';
+import { createDamageFX } from './damage.js';
+import { createLandmarks } from './neon.js';
+import { createInput, ACT_JUMP, ACT_PUNCH, ACT_WEAPON, ACT_PAUSE, ACT_CONFIRM, clamp, lerp, lerpAngle, angleDiff } from './util.js';
 
 const params = new URLSearchParams(location.search);
 const SHOT = params.get('shot') || null;
@@ -69,6 +74,10 @@ const cityDetails = buildCityDetails(scene, city);
 // --- Vehicles (drivable cars, traffic, chase-cam) ---
 const vehicles = createVehicles(scene, city);
 
+// --- Police (wanted level, pursuit cars, helicopter) + NPCs ---
+const police = createPolice(scene, city, vehicles);
+const npcs = createNPCs(scene, city);
+
 // --- Player ---
 const playerMesh = makeCharacter({ shirt: 0xc0392b, pants: 0x2c3e50, skin: 0xc9976b, scale: 1 });
 scene.add(playerMesh.group);
@@ -80,6 +89,11 @@ const player = {
 };
 playerMesh.group.position.set(player.x, 0, player.z);
 playerMesh.group.rotation.y = player.heading;
+
+// --- Combat (punch + weapons) + damage FX + landmarks (neon, ferris wheel) ---
+const combat = createCombat(scene, player, playerMesh, npcs, police);
+const damageFX = createDamageFX(scene);
+const landmarks = createLandmarks(scene, city);
 
 // --- Input ---
 const input = createInput(canvas);
@@ -141,8 +155,17 @@ function drawMinimap() {
   // Vehicle blips: parked cars (grey), traffic (blue), the player's car (gold).
   for (const v of vehicles.list) {
     const vx = px(v.x), vz = px(v.z);
-    mctx.fillStyle = v === vehicles.playerCar ? '#ffd60a' : (v.isTraffic ? '#7ec8ff' : '#e8e8e8');
+    mctx.fillStyle = v === vehicles.playerCar ? '#ffd60a' : (v.isPolice ? '#ff4040' : (v.isTraffic ? '#7ec8ff' : '#e8e8e8'));
     mctx.fillRect(vx - 2, vz - 2, 4, 4);
+  }
+  // Helicopter blip (white) + pedestrian blips (pale dots).
+  if (police.heli) {
+    mctx.fillStyle = '#ffffff';
+    mctx.fillRect(px(police.heli.x) - 2, px(police.heli.z) - 2, 4, 4);
+  }
+  mctx.fillStyle = '#d8d8d8';
+  for (const n of npcs.list) {
+    mctx.fillRect(px(n.x) - 1, px(n.z) - 1, 2, 2);
   }
   // Player arrow. On the canvas +x is right and +z is down; the player faces
   // (sin h, cos h) in (x,z), so rotate the up-pointing triangle by PI - h.
@@ -160,9 +183,10 @@ function drawMinimap() {
 function updateHUD() {
   healthfill.style.width = `${clamp(player.health, 0, 100)}%`;
   moneyEl.textContent = `$${player.money.toLocaleString('en-US')}`;
-  starsEl.textContent = '☆☆☆☆☆';
+  const w = police.wanted;
+  starsEl.textContent = '★'.repeat(w) + '☆'.repeat(5 - w);
   mnameEl.textContent = 'VICE BAY — FREE ROAM';
-  mobjEl.textContent = 'Explore the city. Missions, cars and the police arrive in the next stages.';
+  mobjEl.textContent = 'Steal a car, outrun the VBPD. Missions arrive in Stage 4.';
   mtimerEl.textContent = '';
   locnameEl.textContent = districtName(player.x, player.z);
   clockEl.textContent = '18:42';
@@ -172,11 +196,36 @@ function updateHUD() {
   if (vehicles.playerCar) {
     carrowEl.style.display = 'flex';
     carhpEl.textContent = `CAR ${vehicles.playerCar.condition}%`;
+    carhpEl.style.color = vehicles.playerCar.condition < 45 ? '#ff6b6b' : '';
   } else {
     carrowEl.style.display = 'none';
   }
   speedvalEl.textContent = String(Math.round(player.speed * 3.6));
-  dispatchUnitsEl.innerHTML = '<div class="unit"><span>VBPD — STANDBY</span><span class="dist">NO ACTIVE UNITS</span></div>';
+  // Weapon slots: the equipped weapon is active; FISTS/BAT/PISTOL are owned,
+  // SMG stays locked.
+  const slots = [$('wslot0'), $('wslot1'), $('wslot2'), $('wslot3')];
+  slots.forEach((s, i) => {
+    if (!s) return;
+    s.classList.toggle('active', i === combat.weaponIndex);
+    s.classList.toggle('locked', i === 3);
+  });
+  // Dispatch board: named units + roles + live distances, or standby.
+  const units = police.units(player);
+  if (units.length === 0) {
+    dispatchUnitsEl.innerHTML = '<div class="unit"><span>VBPD — STANDBY</span><span class="dist">NO ACTIVE UNITS</span></div>';
+  } else {
+    dispatchUnitsEl.innerHTML = units.map((u) =>
+      `<div class="unit"><span>${u.name} — <span class="role">${u.role}</span></span><span class="dist">${u.dist} m</span></div>`
+    ).join('');
+  }
+  // Rico warns the player the first time the heat is on.
+  if (w >= 3 && !updateHUD._warned) {
+    updateHUD._warned = true;
+    dialogueLineEl.textContent = 'The cops are all over you, Jax. Lose them — fast.';
+  } else if (w === 0 && updateHUD._warned) {
+    updateHUD._warned = false;
+    dialogueLineEl.textContent = 'Welcome to Vice Bay, Jax. Keep your head down and your wheels turning.';
+  }
   drawMinimap();
 }
 
@@ -190,7 +239,8 @@ function updateCamera(dt, orbitMode) {
   player.camPitch = clamp(player.camPitch + look.dy * 0.003, 0.06, 0.75);
   if (vehicles.playerCar) {
     // Driving: cinematic chase-cam behind the car (handled by the vehicle system).
-    vehicles.driveCamera(camera, dt, look);
+    // Lift the camera when the helicopter is up so it stays in frame.
+    vehicles.driveCamera(camera, dt, look, police.heliActive() ? 1 : 0);
     if (shake > 0.001) {
       camera.position.x += (Math.random() - 0.5) * shake;
       camera.position.y += (Math.random() - 0.5) * shake;
@@ -275,10 +325,10 @@ function updatePlayer(dt, actions) {
   player.x = res.x; player.z = res.z;
   player.x = clamp(player.x, -235, 235);
   player.z = clamp(player.z, -235, 206);
-  // Pose + mesh (walk/run animation, jump tuck, walk bob).
+  // Pose + mesh (walk/run animation, jump tuck, walk bob, punch swing).
   player.walkPhase += player.speed * dt * 1.7;
   const amp = clamp(player.speed / 9, 0, 1) * (input.run ? 0.95 : 0.6);
-  poseCharacter(playerMesh, player.walkPhase, amp, 0, clamp(player.speed / 9, 0, 1) * 0.14, player.onGround ? 0 : 1);
+  poseCharacter(playerMesh, player.walkPhase, amp, combat.punchT, clamp(player.speed / 9, 0, 1) * 0.14, player.onGround ? 0 : 1);
   playerMesh.group.position.set(player.x, player.y + playerMesh.bob, player.z);
   playerMesh.group.rotation.y = player.heading;
 }
@@ -304,6 +354,29 @@ function stageShot(name) {
     vehicles.enterCar(car, player, playerMesh);
     car.speed = 20;
     player.camYaw = car.heading; player.camPitch = 0.22;
+  } else if (name === 'chase') {
+    // Cinematic police chase: the player is IN the hero car, driving south
+    // on the central road toward the beach, with the VBPD in pursuit — two
+    // police cars ahead/behind, the helicopter overhead with its spotlight,
+    // traffic ahead, pedestrians on the sidewalks, and the ferris wheel dead
+    // ahead in the distance.
+    const car = vehicles.hero;
+    vehicles.enterCar(car, player, playerMesh);
+    car.x = 0; car.z = 100; car.heading = 0; car.speed = 22;
+    car.group.position.set(0, 0, 100);
+    car.group.rotation.y = 0;
+    player.camYaw = car.heading; player.camPitch = 0.22;
+    police.stageChase();
+    // Traffic ahead on the road (the traffic update re-places the meshes
+    // from v.x/v.z each frame, so only the state needs staging).
+    const traffic = vehicles.list.filter((v) => v.isTraffic);
+    const taxi = traffic.find((v) => v.type === 'taxi');
+    if (taxi) { taxi.x = -3; taxi.z = 124; taxi.heading = 0; taxi.speed = 11; }
+    const sedan = traffic.find((v) => v.type === 'sedan');
+    if (sedan) { sedan.x = 5; sedan.z = 158; sedan.heading = 0; sedan.speed = 10; }
+    // Pedestrians on the sidewalks.
+    npcs.place(0, 8, 112, Math.PI);
+    npcs.place(1, -8, 130, 0);
   }
   playerMesh.group.position.set(player.x, player.y, player.z);
   playerMesh.group.rotation.y = player.heading;
@@ -338,6 +411,9 @@ function resumeGame() {
 }
 function restartGame() {
   vehicles.reset(player, playerMesh);
+  police.reset();
+  npcs.reset();
+  combat.reset();
   player.x = city.playerStart.x; player.z = city.playerStart.z; player.y = 0; player.vy = 0;
   player.heading = city.playerStart.heading; player.camYaw = player.heading;
   player.health = 100; player.money = 250; player.speed = 0;
@@ -397,8 +473,30 @@ function animate() {
   if ((actions & ACT_CONFIRM) && mode === 'title') startGame();
   if (mode === 'playing') {
     // Vehicles own the E key and the driving state; on foot the player walks.
+    const wasDriving = !!vehicles.playerCar;
     const driving = vehicles.update(dt, actions, input, player, playerMesh);
     if (!driving) updatePlayer(dt, actions);
+    // Stealing a parked car is a crime (not when a shot is staged).
+    if (driving && !wasDriving && !SHOT) police.addWanted(1);
+    const ev = police.update(dt, player, vehicles);
+    if (ev.rammed) shake = 0.6;
+    npcs.update(dt, player, vehicles, police);
+    combat.update(dt, actions, player, playerMesh, vehicles);
+    damageFX.update(dt, vehicles);
+    landmarks.update(dt);
+    // Wasted: the player wakes up at the Hospital, heat cleared.
+    if (player.health <= 0) {
+      if (vehicles.playerCar) vehicles.exitCar(player, playerMesh);
+      police.reset();
+      player.x = city.landmarks.hospital.x; player.z = city.landmarks.hospital.z;
+      player.y = 0; player.vy = 0; player.health = 100; player.speed = 0;
+      player.heading = 0; player.camYaw = 0;
+      playerMesh.group.position.set(player.x, 0, player.z);
+      playerMesh.group.rotation.y = 0;
+      playerMesh.group.visible = true;
+      camInit = false;
+      setBanner('WASTED', 'You woke up at the Hospital.');
+    }
     updateHUD();
   }
   // Sun follows the player so shadows stay crisp nearby.
@@ -424,7 +522,7 @@ window.addEventListener('resize', () => {
 window.addEventListener('error', (e) => { window.__lastError = String(e.message || e.error); });
 
 // Debug handle for automated tests (read-only state).
-window.__vb = { player, city, vehicles, get mode() { return mode; }, get frames() { return frames; }, get driving() { return !!vehicles.playerCar; } };
+window.__vb = { player, city, vehicles, police, npcs, combat, damageFX, get mode() { return mode; }, get frames() { return frames; }, get driving() { return !!vehicles.playerCar; } };
 
 // --- Boot ---
 if (SHOT) {

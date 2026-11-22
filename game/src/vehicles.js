@@ -62,6 +62,7 @@ const LOOPS = [
   [[-168, -168], [0, -168], [0, -112], [-168, -112]],
   [[0, 112], [168, 112], [168, 168], [0, 168]],
   [[-168, 56], [-56, 56], [-56, 112], [-168, 112]],
+  [[-112, -168], [-112, 0], [-56, 0], [-56, -168]],
 ];
 
 const PARKED_DEFS = [
@@ -77,6 +78,7 @@ const TRAFFIC_DEFS = [
   { type: 'taxi', colour: 0xf0c020, loop: 1, speed: 11 },
   { type: 'van', colour: 0x4a6a8a, loop: 2, speed: 9 },
   { type: 'sedan', colour: 0x7a4a8a, loop: 3, speed: 10 },
+  { type: 'truck', colour: 0x8a2a2a, loop: 4, speed: 9 },
 ];
 
 const TYPE_LABEL = { sedan: 'SEDAN', sports: 'SPORTS', taxi: 'TAXI', truck: 'TRUCK', van: 'VAN', police: 'VBPD INTERCEPTOR', armoured: 'ARMOURED VAN' };
@@ -251,11 +253,13 @@ export function createVehicles(scene, city) {
       car.speed = Math.abs(car.speed) <= drag ? 0 : car.speed - Math.sign(car.speed) * drag;
     }
     if (handbrake) car.speed -= Math.sign(car.speed) * 22 * dt;
-    car.speed = clamp(car.speed, -9, spec.maxSpeed);
+    // Damage is real: a battered car loses top speed (55% at condition 5).
+    const effMax = car.spec.maxSpeed * (0.55 + 0.45 * car.condition / 100);
+    car.speed = clamp(car.speed, -9, effMax);
     if (Math.abs(car.speed) < 0.05 && axes.f === 0) car.speed = 0;
     // Steering: speed-sensitive, sharper with the handbrake.
     const spd = Math.abs(car.speed);
-    const turnFactor = clamp(spd / 12, 0, 1) * (1 - clamp(spd / spec.maxSpeed, 0, 1) * 0.45) * (handbrake ? 1.6 : 1);
+    const turnFactor = clamp(spd / 12, 0, 1) * (1 - clamp(spd / effMax, 0, 1) * 0.45) * (handbrake ? 1.6 : 1);
     const steerTarget = axes.s * 0.55;
     car.steer += (steerTarget - car.steer) * (1 - Math.exp(-10 * dt));
     car.heading -= car.steer * turnFactor * 2.2 * dt * Math.sign(car.speed || 1);
@@ -270,9 +274,10 @@ export function createVehicles(scene, city) {
     const hitFront = collides(city.colliders, fx, fz, 0.9);
     const hitRear = collides(city.colliders, bx, bz, 0.9);
     if (hitFront || hitRear || (res.x !== car.x + Math.sin(car.heading) * car.speed * dt) || (res.z !== car.z + Math.cos(car.heading) * car.speed * dt)) {
-      // Crash: stop at the previous position, bleed speed, small shake via speed loss.
+      // Crash: stop at the previous position, bleed speed, damage the car.
       car.x = prevX; car.z = prevZ;
       car.speed *= 0.3;
+      car.condition = Math.max(5, car.condition - 2);
     } else {
       car.x = clamp(nx, -235, 235);
       car.z = clamp(nz, -235, 206);
@@ -286,6 +291,7 @@ export function createVehicles(scene, city) {
         const ux = (car.x - o.x) / d, uz = (car.z - o.z) / d;
         car.x += ux * push; car.z += uz * push;
         car.speed *= 0.55;
+        car.condition = Math.max(5, car.condition - 1.5);
         if (o.isTraffic) o.speed *= 0.5;
       }
     }
@@ -359,15 +365,17 @@ export function createVehicles(scene, city) {
   }
 
   // --- Chase-cam: smooth, low, close behind the car, with a sense of speed.
-  // look = {dx, dy} mouse-drag deltas (consumed here). Returns nothing; moves `camera`.
-  function driveCamera(camera, dt, look) {
+  // look = {dx, dy} mouse-drag deltas (consumed here). lift = 1 when the
+  // police helicopter is active: the camera pulls back a little and tilts up
+  // so the helicopter stays in frame. Returns nothing; moves `camera`.
+  function driveCamera(camera, dt, look, lift) {
     const car = playerCar;
     if (!car) return;
     driveCamYaw -= look.dx * 0.004;
     driveCamPitch = clamp(driveCamPitch + look.dy * 0.002, 0.08, 0.5);
     // Ease the camera back behind the car.
     driveCamYaw = lerpAngle(driveCamYaw, car.heading, 1 - Math.exp(-1.6 * dt));
-    const dist = 9.5;
+    const dist = 9.5 + (lift ? 1 : 0);
     const speedF = clamp(Math.abs(car.speed) / car.spec.maxSpeed, 0, 1);
     const height = 2.7 - speedF * 0.55; // lower + more aggressive at speed
     const cp = Math.cos(driveCamPitch), sp = Math.sin(driveCamPitch);
@@ -380,7 +388,7 @@ export function createVehicles(scene, city) {
     camera.position.y = Math.max(camera.position.y, 1.4);
     camera.lookAt(
       car.x + Math.sin(car.heading) * 6,
-      1.6,
+      1.6 + (lift ? 2.5 : 0),
       car.z + Math.cos(car.heading) * 6
     );
     // FOV kick with speed (a sense of speed).
@@ -390,6 +398,12 @@ export function createVehicles(scene, city) {
       camera.fov = fov;
       camera.updateProjectionMatrix();
     }
+  }
+
+  // Damage the player's car from outside (police ram). Condition floors at 5.
+  function damagePlayerCar(amount) {
+    if (!playerCar) return;
+    playerCar.condition = Math.max(5, playerCar.condition - amount);
   }
 
   function update(dt, actions, input, player, playerMesh) {
@@ -421,5 +435,6 @@ export function createVehicles(scene, city) {
     enterCar,
     exitCar,
     reset,
+    damagePlayerCar,
   };
 }
