@@ -397,3 +397,58 @@ The old Stage 2–4 modules were removed from the repo in this commit (they live
 
 ### Estimated completion time (salvage, actual)
 - Salvage done 22 Nov ~19:45 WIB (verify + commit e1bdc5d + main test 35/40 + focused probes + screenshots + dossier + kit check + this record + second commit). Stage 4 estimate: ~45–60 min (missions + audio + polish + re-test + re-shoot) once Mot approves. **Deadline for the final submission: 24 Nov 22:00 WIB** (gta6-01 closes). Do NOT seal or submit without Mot's approval.
+
+---
+
+## Rebuild-v3 Stage 4 — Missions + audio + polish + hero fix (DONE)
+
+**Context:** Mot approved Stage 4 (22 Nov ~19:31 WIB) and ordered: missions, audio, polish, hero-shot refinement (a police car actually visible), punch re-test, police-stuck evaluation, full Stage 1–3 re-test + the 5 checks that did not pass in the Stage 3 salvage, save/load + offline. The visual upgrade (GTA V-like character/cars/city) is a SEPARATE estimate, NOT part of this stage. Do NOT seal; do NOT submit; do NOT delete/replace the backup submission. This stage was built by a separate (unrecorded) session — no live recorder existed (recording 01a202e0 died with the VM ~18:50 WIB).
+
+**Commit:** Stage 4 code + screenshots + this record (pushed to origin, branch `full-3d-v2`).
+
+### Features BUILT (all fresh for Stage 4)
+- **`game/src/missions.js` (7,438 B, fresh):** 4 story jobs from Rico, run in sequence (auto-start M1 on START; N skips to the next). Each has a gold beacon (in-world + minimap diamond), a live objective in the HUD, and a money reward actually added to the player's money on completion. M1 BEACH RUN — drive to the beach marker, $100. M2 PACKAGE RUN — deliver to the market marker within 90 s, $150. M3 LOSE THE HEAT — get 3 stars, then lose them, $200. M4 CHECKPOINT DASH — 3 checkpoints in order, $250. Failed timed missions can be retried with N. `getState()` / `getMarker()` feed the HUD + minimap.
+- **`game/src/audio.js` (5,850 B, fresh):** synthesized Web Audio, no external files — engine hum (pitch follows speed), police siren while wanted, gunshot, punch thud, reward chime, fail tone, quiet ambient city pad. Mute (M) silences the master gain. Never throws if AudioContext is unavailable. Wired in main3d.js (resume on START, engine + siren in the loop, gunshot/punch on F, chime on mission complete, fail tone on mission fail).
+- **Polish (main3d.js + index.html):** mission panel shows the active job + brief + live progress (distance / checkpoint / timer / phase) + reward; banner "Jobs are live — press N for the next job"; title screen "Four jobs from the fixer Rico, live now"; controls line adds "N next job"; minimap shows the mission marker (gold diamond); README rewritten for the complete game (jobs, wanted, audio, features, controls).
+- **Chase staging fix (`police.js` stageChase + main3d.js `stageShot('chase')`):** a police car now sits ALONGSIDE the player (left lane, 10 m ahead, same road) — inside the chase-cam frame, not 34–52 m ahead where Stage 3 read as specks. Two more cruisers ahead on the same road, helicopter above-ahead, two traffic cars ahead. The hero now shows a police car chasing.
+- **Police-stuck backout (`police.js`, minimal):** a cruiser that is barely moving (speed < 2.5 m/s) AND not closing on the player for 3 s of game time backs out (reverse ~6 m/s + turn ~129°) and tries a different angle. This is NOT pathfinding — it only unsticks. The speed gate keeps it from firing when the player simply outruns a cruiser.
+- **Test hooks (`__vb`):** `npcPositions` (NPC x/z/state), `policeCars` (x/z/speed/heading/stuckTimer/backoutTimer/condition), `missions` / `startMission(i)` / `startNextMission()`, `audio` (ctx state, muted, engine/siren), `toggleMute()`, `setYaw(yaw)`.
+
+### Features TESTED (headless Chromium 1255, SwiftShader, 1280×720; test script `~/workspace/makefun/gta6-01/test-rebuild-stage4-v3.py`; stuck probe `~/workspace/makefun/gta6-01/probe-stuck.py`)
+- **Main test: 55/55 checks PASS, 0 console errors, 0 page errors, 0 failed requests, 0 external requests (offline verified).**
+- **Verified (measured):** title loads; START → playing; mission 1 auto-starts (BEACH RUN, active); audio context exists, state `running`, mute toggles False → True → False; walk 4.32 m/s; run 8.37 m/s; jump apex 1.26 m + lands; save/load round-trips (restores (40, −80)); **M1 completes +$100 ($250 → $350)**; **M2 completes +$150 ($350 → $500)**; **M3 phase 2 (3 stars registered), completes +$200 ($500 → $700)**; **M4 checkpoints 1/3, 2/3, completes +$250 ($700 → $950)**; all 4 missions done; HUD mission line shows "MISSION COMPLETE — CHECKPOINT DASH +$250"; NPCs 10; E enters car; car theft → wanted 1; police spawns at 90 m, closes 90 → 88 m in 12 s; car accelerates to 21 KM/H; E exits car; helicopter at 3 stars, follows 27.0 m, heli y=32; 3 police cars at 3 stars; dispatch shows AIR 1; Q cycles FISTS → BAT → PISTOL → FISTS; **punch hits an NPC (NPC at (−15.2, −69.4), attempt 1), NPC knocked down (down 0 → 1)**; pistol equipped; pistol hits a target; wanted rises from combat to 3; FPS meter reports 1 (SwiftShader ~1 FPS); all 4 staged shots reach `__shotReady`; all 4 screenshots ≤256 KiB.
+- **Screenshots (all viewed, all ≤256 KiB):**
+  - `screenshots/1-onfoot.jpg` (69,145 B) — character front-on on a dark road, 0 KM/H, "FREE ROAM — Press N to start the next job."
+  - `screenshots/2-chase.jpg` (119,653 B) — **HERO (FIXED): red SUNSET GT chase-cam at 72 KM/H, 4 stars, a WHITE POLICE CAR alongside (VBPD-07 PURSUIT 11 m) + dispatch VBPD-07/12/23/31 + AIR 1, helicopter spotlight cone, ferris wheel, "WANTED — Lose the VBPD", Rico warning.**
+  - `screenshots/3-city.jpg` (144,351 B) — aerial dusk city, lit windows, VICE BAY neon sign, plaza fountain.
+  - `screenshots/4-beach.jpg` (67,920 B) — character on sand, teal sea + sun glow, palm.
+- `shots.json` lists exactly the 4 shots (unchanged — same names/queries).
+- `main.ts` writes a valid dossier.json (schema makefun/dossier/v1, 4 images, text **152,477 bytes** of the 163,840 cap).
+- **Kit check: 4 passed, 0 failed, 17 skipped, 5 checked at submission** (the 5 are repo/submission items the site checks at submit time).
+
+### The 5 checks that did not pass in the Stage 3 salvage main test (35/40) — status now
+1. **(a) Walk check — PASS.** Was a test bug (poll_value returned the initial 0). Fixed in the Stage 3 salvage probe (4.32 m/s); re-verified in Stage 4: walk 4.32 m/s.
+2. **(b) E enters car — PASS.** Was a test-timing issue. Re-verified in Stage 4: E enters the car.
+3. **(c) Car-theft wanted check — PASS.** Was a test bug (read wanted before heat propagated). Fixed in the Stage 3 salvage probe (wanted=1); re-verified in Stage 4: car theft → wanted 1.
+4. **(d) Punch hit — PASS (fixed by a targeted re-test, not a game change).** The Stage 3 salvage could not hit an NPC in 20 attempts (NPCs sparse). Stage 4 re-tested by placing the player 1.5 m from a real walking NPC, facing it (same synchronous evaluate, so the NPC cannot move between the read and the punch): **punch hit on attempt 1, NPC knocked down (down 0 → 1).** The punch mechanic was sound; the Stage 3 failure was the test's blind sidewalk spots.
+5. **(e) Police ram / health drop — NOT VERIFIED (limitation, see the stuck evaluation below).** No ram was observed in the 240 s stuck probe (health stayed 100).
+
+### Police-stuck evaluation (probe-stuck.py, 240 s, player on foot at (0, 100), wanted=1 re-asserted every 8 s)
+- **The backout fix WORKS as designed (observed):** the cruiser closed 65.3 → 59.3 m, then stalled at ~59 m with speed ~1.99 m/s (pinned against a building). At t≈114 s the stuck detector fired (backoutTimer 1.4 → 0): the car reversed at −6 m/s, backed out to ~61 m, turned, and re-approached.
+- **But the fix does NOT solve the stuck problem:** after the backout the cruiser re-approached and got pinned AGAIN at ~58 m (speed ~1.7–2.4 m/s), and stayed there to the end of the probe. Min distance over 240 s: **58.1 m**. No ram, health stayed 100.
+- **Honest conclusion: the backout prevents permanent pinning (the car does move and retry), but it does NOT get the cruiser around a building — there is still NO pathfinding.** On real hardware (60 FPS) the 3 s game-time stuck trigger fires every 3 s real time (vs 60 s under SwiftShader), so the car retries far more often and may eventually find a corner — but that is UNVERIFIED, and I do NOT claim it. **On-foot rams remain unverified when a building blocks the direct path. The chase on roads is verified (police close 90 → 88 m while the player drives; the hero shows a cruiser alongside).**
+
+### Errors / obstacles found (all fixed, or honestly reported as NOT fixed)
+1. **Pistol test read a stale wanted value** (poll_value returned the first read before the next frame's police.update() synced player.wanted from heat). **FIXED** the test to poll for `wanted >= 3`. Re-test: wanted=3.
+2. **Car-acceleration test read the speed while still accelerating** (poll_value returned 16 KM/H on the first read). **FIXED** the test to poll for `KM/H > 20`. Re-test: 21 KM/H.
+3. **Pistol never fired on the first run** (the punch's 0.6 s game-time attack cooldown had not expired — SwiftShader ~1 FPS means 0.6 s game time is ~12 s real time). **FIXED** the test to wait 14 s before the pistol loop. Re-test: pistol fires, wanted rises to 3.
+4. **Police-stuck backout does not get the cruiser around a building** (see the evaluation above). **NOT fixed — reported honestly.** A detour phase (drive along the building face after backing out) or a re-spawn on a nearby road would be a bigger change, not minimal; NOT attempted in this stage.
+
+### Features NOT yet done (next steps, Mot's decision)
+- **Visual upgrade (SEPARATE estimate, NOT implemented):** GTA V-like character/cars/city per the 4 reference-gtav-*.jpg images. See the Stage 4 report for the estimate (approach, time, risks). Do NOT start it before the Stage 4 checkpoint is safe + Mot approves.
+- **Seal / submit:** NOT done. Do NOT seal or submit without Mot's approval. Recording 01a202e0 is still unsealed; no new recorder was started.
+- **Known limitations to weigh for the final submission:** police pursuit has no pathfinding (cruiser can be re-pinned on buildings on foot; on-foot ram unverified); the beach shot's sand foreground is still a wide empty expanse; 1-onfoot shot is darker than Stage 2 (dusk lighting, noted, not a defect); the staged onfoot/beach shots show "FREE ROAM — Press N to start the next job" (missions auto-start on START, not on staged shots).
+- **Not in scope (simplified, honest):** procedural low-poly models only, no detailed rigs, no helicopter roadblocks, no weapon wheel beyond the shown slots, 4 missions (not 8–10), no garage upgrades, no respect ranks beyond the HUD label.
+
+### Estimated completion time (Stage 4, actual)
+- Stage 4 done 22 Nov ~20:00 WIB (missions.js + audio.js fresh, wiring, chase fix, backout fix, main test 55/55 + stuck probe 240 s, screenshots, dossier + kit check, this record, commit + push). **Deadline for the final submission: 24 Nov 22:00 WIB** (gta6-01 closes). Do NOT seal or submit without Mot's approval.

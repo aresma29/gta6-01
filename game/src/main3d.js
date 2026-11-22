@@ -10,6 +10,8 @@ import { createNPCs } from './npcs.js';
 import { createCombat } from './combat.js';
 import { createDamage } from './damage.js';
 import { createNeon } from './neon.js';
+import { createMissions } from './missions.js';
+import { createAudio } from './audio.js';
 import { clamp, lerp, damp, angleDelta, resolveCollisions } from './util.js';
 
 const WALK_SPEED = 5;
@@ -83,6 +85,17 @@ const police = createPolice(scene, city, vehicles, player, damage);
 const npcs = createNPCs(scene, city, player, vehicles);
 const combat = createCombat(scene, player, npcs, police, damage);
 
+// --- Stage 4 systems: missions + audio ---
+const audio = createAudio();
+const missions = createMissions(scene, player, police, {
+  onComplete(def) {
+    audio.chime();
+  },
+  onFail() {
+    audio.failTone();
+  },
+});
+
 // --- camera rig ---
 const cam = {
   yaw: Math.PI,
@@ -108,7 +121,14 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'Space') jumpQueued = true;
   if (e.code === 'KeyE') toggleCar();
   if (e.code === 'KeyQ') combat.switchWeapon();
-  if (e.code === 'KeyF') combat.attack();
+  if (e.code === 'KeyF') {
+    const ok = combat.attack();
+    if (ok) {
+      if (combat.weapon === 'PISTOL') audio.gunshot();
+      else audio.punch();
+    }
+  }
+  if (e.code === 'KeyN') missions.startNext();
   if (e.code === 'KeyP' || e.code === 'Escape') togglePause();
   if (e.code === 'KeyM') toggleMute();
   if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
@@ -280,6 +300,19 @@ function drawMinimap() {
     ctx.arc(vx, vz, 2, 0, Math.PI * 2);
     ctx.fill();
   }
+  // Mission marker (gold diamond).
+  const marker = missions.getMarker();
+  if (marker) {
+    const [mx, mz] = toMap(marker.x, marker.z);
+    ctx.fillStyle = '#ffd76a';
+    ctx.beginPath();
+    ctx.moveTo(mx, mz - 6);
+    ctx.lineTo(mx + 5, mz);
+    ctx.lineTo(mx, mz + 6);
+    ctx.lineTo(mx - 5, mz);
+    ctx.closePath();
+    ctx.fill();
+  }
 }
 
 function updateHUD() {
@@ -328,13 +361,23 @@ function updateHUD() {
   hud.weaponSlots.innerHTML =
     ['FISTS', 'BAT', 'PISTOL'].map((name) => (name === w ? `<b>${name}</b>` : name)).join(' &nbsp; ') +
     ' &nbsp; <span class="locked">SMG</span>';
-  // Mission line: WASTED flash, then wanted-aware free roam.
+  // Mission line: flash (complete/fail), then the active job with live
+  // progress; WASTED flashes over everything for 5 s.
+  const ms = missions.getState();
   if (wastedAt > 0 && performance.now() - wastedAt < 5000) {
     hud.mission.textContent = 'WASTED — You woke up at the Hospital. The VBPD let you off this time.';
+  } else if (ms.flash) {
+    hud.mission.textContent = ms.flash;
+  } else if (ms.status === 'active' && ms.name) {
+    hud.mission.textContent = `JOB: ${ms.name} — ${ms.brief} [${ms.progress}] · Reward $${ms.reward}`;
+  } else if (ms.status === 'failed') {
+    hud.mission.textContent = 'JOB FAILED — Press N to retry.';
+  } else if (ms.status === 'done') {
+    hud.mission.textContent = 'ALL JOBS DONE — Free roam. Press N to replay the jobs.';
   } else if (player.wanted >= 3) {
-    hud.mission.textContent = 'WANTED — Lose the VBPD. Missions arrive in Stage 4.';
+    hud.mission.textContent = 'WANTED — Lose the VBPD.';
   } else {
-    hud.mission.textContent = 'FREE ROAM — Steal a car, outrun the VBPD. Missions arrive in Stage 4.';
+    hud.mission.textContent = 'FREE ROAM — Press N to start the next job.';
   }
   // Rico warns the player when the heat is on.
   hud.dialogueText.textContent = player.wanted >= 3
@@ -356,6 +399,10 @@ function startGame() {
   mode = 'playing';
   hud.title.classList.add('hidden');
   hud.pause.classList.add('hidden');
+  // Audio needs a user gesture: resume the context on START.
+  audio.resume();
+  // First job starts with the game (missions run in sequence; N skips).
+  if (missions.getState().status === 'idle') missions.startMission(0);
 }
 function togglePause() {
   if (mode === 'playing') {
@@ -368,6 +415,7 @@ function togglePause() {
 }
 function toggleMute() {
   muted = !muted;
+  audio.setMuted(muted);
 }
 
 // E: enter the nearest parked car, or step out of the driven car.
@@ -448,6 +496,7 @@ el('btn-restart').addEventListener('click', () => {
   npcs.reset();
   combat.reset();
   damage.reset();
+  missions.reset();
   char.group.visible = true;
   player.x = 0;
   player.z = 26;
@@ -700,12 +749,18 @@ function stageShot(name) {
     cam.pitch = 0.3;
     // Wanted 4 + staged police + helicopter (see police.stageChase).
     police.stageChase();
-    // One traffic car ahead on the chase road, for density.
+    // Two traffic cars ahead on the chase road, for density.
     if (vehicles.traffic[0]) {
       vehicles.traffic[0].x = 6;
       vehicles.traffic[0].z = 178;
       vehicles.traffic[0].heading = 0;
       vehicles.traffic[0].speed = 10;
+    }
+    if (vehicles.traffic[1]) {
+      vehicles.traffic[1].x = -2;
+      vehicles.traffic[1].z = 196;
+      vehicles.traffic[1].heading = 0;
+      vehicles.traffic[1].speed = 12;
     }
     // Two pedestrians on the sidewalks beside the chase road.
     if (npcs.list[0]) {
@@ -762,6 +817,14 @@ function loop(now) {
     police.update(dt);
     npcs.update(dt, { policeCars: police.cars, playerAttacking: combat.swingTimer > 0 });
     combat.update(dt);
+    // Stage 4 systems: missions + audio.
+    missions.update(dt);
+    if (vehicles.driving && vehicles.car) {
+      audio.setEngine(vehicles.car.speed, true);
+    } else {
+      audio.setEngine(0, false);
+    }
+    audio.setSiren(player.wanted > 0);
     const smokeCars = [];
     if (vehicles.driving && vehicles.car) smokeCars.push(vehicles.car);
     for (const c of police.cars) smokeCars.push(c);
@@ -863,11 +926,44 @@ window.__vb = {
   get police() {
     return police.getState();
   },
+  get policeCars() {
+    return police.cars.map((c) => ({
+      x: Math.round(c.x * 10) / 10,
+      z: Math.round(c.z * 10) / 10,
+      speed: Math.round(c.speed * 100) / 100,
+      heading: Math.round(c.heading * 100) / 100,
+      stuckTimer: Math.round((c.stuckTimer || 0) * 100) / 100,
+      backoutTimer: Math.round((c.backoutTimer || 0) * 100) / 100,
+      condition: Math.round(c.condition),
+    }));
+  },
+  setYaw(yaw) {
+    player.yaw = yaw;
+  },
   get npcs() {
     return npcs.getState();
   },
+  get npcPositions() {
+    return npcs.list.map((n) => ({ x: Math.round(n.x * 10) / 10, z: Math.round(n.z * 10) / 10, state: n.state }));
+  },
   get combat() {
     return combat.getState();
+  },
+  get missions() {
+    return missions.getState();
+  },
+  startMission(i) {
+    return missions.startMission(i);
+  },
+  startNextMission() {
+    return missions.startNext();
+  },
+  get audio() {
+    return audio.getState();
+  },
+  toggleMute() {
+    toggleMute();
+    return muted;
   },
   get heli() {
     const h = police.helicopter;

@@ -234,6 +234,14 @@ export function createPolice(scene, city, vehicles, player, damage) {
       reverseTimer: 0,
       standingDown: false,
       standDownTimer: 0,
+      // Stuck detection (Stage 4, minimal): a cruiser pressed against a
+      // building cannot close on the player. If it is barely moving AND
+      // not closing for 3 s of game time, it backs out + turns to try a
+      // different angle. This is NOT pathfinding — it only unsticks.
+      stuckTimer: 0,
+      lastDist: Infinity,
+      backoutTimer: 0,
+      backoutDir: 1,
       ...mesh,
     };
     car.group.position.set(car.x, 0, car.z);
@@ -289,10 +297,13 @@ export function createPolice(scene, city, vehicles, player, damage) {
   }
 
   /**
-   * Stage a chase for the `?shot=chase` screenshot: wanted 4, two lead
-   * police cars in open lanes ahead of the player (right then left), a
-   * third closing from behind, the helicopter above-ahead. The player is
-   * expected to be driving south (heading 0, +z) on the central road.
+   * Stage a chase for the `?shot=chase` screenshot: wanted 4, a police
+   * car ALONGSIDE the player (left lane, 10 m ahead — inside the
+   * chase-cam frame, not behind the camera), two more ahead on the same
+   * road, the helicopter above-ahead. The player is expected to be
+   * driving south (heading 0, +z) on the central road (x in [-6, 6]).
+   * Stage 3 placed the cars 34–52 m ahead, where they read as specks or
+   * fell behind a corner; the alongside car is the fix.
    */
   function stageChase() {
     heat = 80;
@@ -300,16 +311,16 @@ export function createPolice(scene, city, vehicles, player, damage) {
     for (const c of cars) scene.remove(c.group);
     cars.length = 0;
     const ahead = [
-      { x: 10, z: player.z + 34, heading: 0 },
-      { x: -2, z: player.z + 52, heading: 0 },
-      { x: 6, z: player.z - 28, heading: 0 },
+      { x: 0, z: player.z + 10, heading: 0, speed: 22 }, // alongside-left, in frame
+      { x: -3, z: player.z + 28, heading: 0, speed: 20 }, // ahead, same road
+      { x: 3, z: player.z + 45, heading: 0, speed: 18 }, // further ahead
     ];
     for (const s of ahead) {
       const car = spawnCar();
       car.x = s.x;
       car.z = s.z;
       car.heading = s.heading;
-      car.speed = 18;
+      car.speed = s.speed;
       car.group.position.set(car.x, 0, car.z);
       car.group.rotation.y = car.heading;
     }
@@ -410,6 +421,12 @@ export function createPolice(scene, city, vehicles, player, damage) {
       } else if (c.reverseTimer > 0) {
         c.reverseTimer -= d;
         c.speed = lerp(c.speed, -5, damp(4, d));
+      } else if (c.backoutTimer > 0) {
+        // Stuck backout: reverse away from the building while turning,
+        // so the next approach comes from a different angle.
+        c.backoutTimer -= d;
+        c.speed = lerp(c.speed, -6, damp(4, d));
+        c.heading += c.backoutDir * 1.5 * d;
       } else {
         // Pursuit: steer at the player, chase slightly faster than them.
         const desired = Math.atan2(dx, dz);
@@ -432,6 +449,24 @@ export function createPolice(scene, city, vehicles, player, damage) {
       }
       c.x = clamp(c.x, -HALF + 4, HALF - 4);
       c.z = clamp(c.z, -HALF + 4, HALF - 4);
+      // Stuck detection (Stage 4, minimal): barely moving AND not closing
+      // on the player for 3 s of game time => back out + turn. The speed
+      // gate keeps this from firing when the player simply outruns a
+      // cruiser (then the speed is high, not ~1.5 m/s as when pinned).
+      if (!c.standingDown && c.backoutTimer <= 0) {
+        const distNow = Math.hypot(player.x - c.x, player.z - c.z);
+        if (Math.abs(c.speed) < 2.5 && distNow >= c.lastDist - 0.5) {
+          c.stuckTimer += d;
+        } else {
+          c.stuckTimer = 0;
+        }
+        c.lastDist = distNow;
+        if (c.stuckTimer > 3) {
+          c.backoutTimer = 1.5;
+          c.backoutDir = Math.random() < 0.5 ? 1 : -1;
+          c.stuckTimer = 0;
+        }
+      }
       // Ram the player's car.
       if (playerCar && dist < 3.4 && !c.standingDown && c.reverseTimer <= 0) {
         damage.damageCar(playerCar, 1.5);
