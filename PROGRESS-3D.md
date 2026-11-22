@@ -494,3 +494,34 @@ The old Stage 2–4 modules were removed from the repo in this commit (they live
 
 ### Estimated completion time (visual prototype, actual)
 - Character prototype done 22 Nov ~20:20 WIB (model hunt + GLTFLoader + loader module + wiring + before/after shots + fixes + full regression 55/55 + dossier + kit check + this record + commit + push). **Do NOT continue to cars/city without Mot's evaluation of this prototype.** If Mot approves, the Stage 4 estimate for the remaining visual work stands: cars ~1.5–2 h, city ~2–3 h, beach + lighting ~1.5–2 h, testing + before/after ~1 h (total ~6–8 h for cars/city/beach/lighting, plus the character work already done). **Deadline for the final submission: 24 Nov 22:00 WIB** (gta6-01 closes). Do NOT seal or submit without Mot's approval.
+
+## Visual Stage 2 — Lighting (character face fix)
+
+**Context:** Mot approved continuing the visual upgrade after evaluating the character prototype (commit 0aff3f6). Stage 2 is LIGHTING + CARS, each with its own commit; city/beach come ONLY after Mot evaluates lighting+cars. This record covers LIGHTING only (cars follow in a separate commit). Branch `visual-prototype`. Stage 4 checkpoint (5d5aeaa) and character checkpoint (0aff3f6) untouched; backup untouched.
+
+### What was built (lighting)
+- **Fill light boosted + repositioned** (`game/src/main3d.js`): intensity 0.55 → 1.6, and moved from `camera.y + 4` (steep top-down, lit the hair but left the vertical face dark) to `player.y + 2.0` (face height, lights the face from the camera direction). Hemisphere 1.15 → 1.35, ambient 0.8 → 0.9 (slight general lift; dusk mood kept).
+- **Skin material brightened** (`game/src/glbCharacter.js`): the Quaternius 'Skin' material ships nearly black (baseColorFactor 0.0134), so the face read as black no matter the lights. The loader now recolors it to a warm skin tone (0xd9a066) at load. CC0 allows recoloring; the GLB file itself is untouched.
+- **Night mode for verification** (`?night=1`): dims sun 2.0 → 0.25, hemisphere 1.35 → 0.5, ambient 0.9 → 0.35, sets the clock to 21:30. Test-only query param; the fill keeps the character visible. Lets the face be verified at night as well as dusk.
+- **Root cause found (two parts):** (1) the fill light came from too high (camera.y+4 ≈ 7.3 m), so it lit the top of the head but not the vertical face; (2) the model's 'Skin' material is essentially black (0.0134), so it reflected almost no light at any angle. Both had to be fixed — neither alone was enough (fill 1.6 alone left the face black; the skin recolor alone would still leave a steep-light face dim).
+
+### Tests (headless Chromium 1255, SwiftShader, 1280×720)
+- **Full Stage 4 regression: 55/55 checks PASS on the re-run, 0 console errors, 0 page errors, 0 failed requests, 0 external requests (offline verified).** (First run after the lighting change was 54/55: the 'police closes in' check read 83 → 83 m in the 12 s window. A focused probe (`probe-police-close.py`) showed the chase works — 70 → 68 m at 12 s → 55 m at 30 s — so the 12 s window is just too short under SwiftShader for a reliable close measurement; the re-run passed 55/55. The lighting change touches no police code.)
+- **Lighting shots (viewed):** `screenshots-visual/char-light-dusk.jpg` (61,993 B, 18:42) and `char-light-night.jpg` (60,785 B, 21:30). In BOTH, the face is clearly visible — warm skin tone, readable eyes/features, not a black silhouette. The blue shirt, brown hair, arms and legs are all readable. Before (char-after.jpg): face nearly black. After: face clearly visible at dusk AND at night.
+- **FPS:** meter reports 1 (SwiftShader, honest — verifies correctness, NOT real-hardware FPS).
+- **Dossier screenshots re-taken by the Stage 4 test** (1-onfoot 72,237 B, 2-chase 122,202 B, 3-city 148,638 B, 4-beach 67,887 B — all ≤256 KiB); they now show the brighter lighting.
+
+### Dossier + kit check (after lighting)
+- Dossier valid: schema makefun/dossier/v1, 4 images, text **160,600 bytes** of the 163,840 cap (`/output/dossier.json`, 700,640 bytes total). Headroom **3,240 bytes** (lighting added 789 bytes). Repo 12 MB total — well under the 64 MB cap.
+- **Kit check: 4 passed, 0 failed, 17 skipped, 5 checked at submission.**
+- **The text cap is the binding constraint.** The cars stage must NET-SAVE bytes (replace procedural car geometry with GLB loading) or it cannot fit. Do NOT add code that pushes the dossier over the cap.
+
+### Errors / obstacles found (all fixed)
+1. **Fill 1.6 alone did not fix the face** — the face stayed black because the light came from too high (camera.y+4). Fixed by moving the fill to face height (player.y+2.0).
+2. **Face still black after the fill move** — the 'Skin' material itself is nearly black (baseColorFactor 0.0134). Found by parsing the GLB JSON chunk: 'Skin' [0.0134, 0.0134, 0.0134], 'Face' (the eyes) [1, 1, 0.94]. Fixed by recoloring 'Skin' to 0xd9a066 at load in glbCharacter.js.
+3. **Regression first run 54/55** ('police closes in' 83 → 83 m) — proven a SwiftShader timing flake by a focused 30 s probe (70 → 55 m); the re-run passed 55/55.
+
+### Remaining shortcomings / risks
+- The dossier text headroom is only 3,240 bytes. Cars must net-save bytes.
+- The `?night=1` param is test-only (not a gameplay day/night cycle); the scene is still permanently dusk-lit.
+- Only 1 of 10 NPCs is a GLB; the other 9 are still procedural boxes.

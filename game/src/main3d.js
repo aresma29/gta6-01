@@ -48,11 +48,13 @@ sun.shadow.camera.bottom = -260;
 sun.shadow.camera.far = 800;
 sun.shadow.bias = -0.0004;
 scene.add(sun);
-scene.add(new THREE.HemisphereLight(0x8a5cc8, 0x2a1a2e, 1.15));
-scene.add(new THREE.AmbientLight(0x604a6a, 0.8));
-// Camera-side fill light: follows the camera so the character never reads
-// as a dark silhouette from behind.
-const fill = new THREE.DirectionalLight(0xffe0b8, 0.55);
+const hemi = new THREE.HemisphereLight(0x8a5cc8, 0x2a1a2e, 1.35);
+scene.add(hemi);
+const amb = new THREE.AmbientLight(0x604a6a, 0.9);
+scene.add(amb);
+// Camera-side fill: follows the camera so the character never reads as a
+// dark silhouette. (Stage 2: fill 0.55 -> 1.6, face visible dusk/night.)
+const fill = new THREE.DirectionalLight(0xffe0b8, 1.6);
 scene.add(fill);
 scene.add(fill.target);
 
@@ -651,7 +653,9 @@ function updateCamera(dt) {
   camera.lookAt(cam.lookX, cam.lookY, cam.lookZ);
   applyShake();
   // Fill light follows the camera so the player is lit from the front.
-  fill.position.set(camera.position.x, camera.position.y + 4, camera.position.z);
+  // (Stage 2: at face height, not camera.y+4 — a steep top-down fill
+  // lit the hair but left the vertical face dark.)
+  fill.position.set(camera.position.x, player.y + 2.0, camera.position.z);
   fill.target.position.set(player.x, 1.2, player.z);
 }
 
@@ -660,6 +664,15 @@ const params = new URLSearchParams(window.location.search);
 const shotName = params.get('shot');
 const shotSeed = params.get('seed') || '1';
 window.__shotReady = false;
+
+// Night mode (?night=1): dims sun + sky; the fill keeps the character
+// visible. (Stage 2 verification.)
+if (params.get('night') === '1') {
+  sun.intensity = 0.25;
+  hemi.intensity = 0.5;
+  amb.intensity = 0.35;
+  clockMin = 21 * 60 + 30; // 21:30
+}
 
 // Snap the camera + look point to their staged targets immediately.
 // Without this the camera lerps from the origin (0,0,0) and after only

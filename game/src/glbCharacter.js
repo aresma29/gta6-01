@@ -33,6 +33,13 @@ export async function loadGLBCharacter(url, targetHeight = 1.8) {
     return null;
   }
   const scene = gltf.scene;
+  // Quaternius 'Skin' ships nearly black (baseColor 0.013), so the face
+  // reads as black at dusk no matter the lights. Brighten it to a warm
+  // skin tone. (CC0: recoloring at load is allowed; the file is untouched.)
+  scene.traverse((o) => {
+    const m = o.material;
+    if (o.isMesh && m && m.name === 'Skin') m.color.setHex(0xd9a066);
+  });
   // Measure in the bind pose, then scale + recenter so the feet sit at y=0
   // and the body is centred on x/z. (inner.position is in the outer
   // group's unscaled space, so it is multiplied by the scale factor.)
