@@ -452,3 +452,45 @@ The old Stage 2–4 modules were removed from the repo in this commit (they live
 
 ### Estimated completion time (Stage 4, actual)
 - Stage 4 done 22 Nov ~20:00 WIB (missions.js + audio.js fresh, wiring, chase fix, backout fix, main test 55/55 + stuck probe 240 s, screenshots, dossier + kit check, this record, commit + push). **Deadline for the final submission: 24 Nov 22:00 WIB** (gta6-01 closes). Do NOT seal or submit without Mot's approval.
+
+## Visual Prototype — Character (GLB rigged human, CC0)
+
+**Context:** Mot approved a GRADUAL visual upgrade with strict checkpoints (22 Nov ~19:56 WIB). Stage 4 commit `5d5aeaa` is the safe checkpoint (branch `checkpoint/stage4`, also at `5d5aeaa`); `full-3d-v2` stays at `5d5aeaa` and is NOT touched by this work. This prototype is on branch `visual-prototype` (HEAD `5d5aeaa` + this work). Scope: character ONLY (one main character + one NPC). Cars / city / beach / lighting are NOT done — they come later only if Mot approves after evaluating this prototype. Do NOT seal or submit without Mot's approval.
+
+**What was built:**
+- **GLTFLoader vendored** (three.js r187, MIT, unmodified): `game/vendor/three/jsm/loaders/GLTFLoader.js` + `game/vendor/three/jsm/utils/BufferGeometryUtils.js` + `SkeletonUtils.js`. Directory layout mirrors three.js `examples/jsm/` so GLTFLoader's relative imports resolve unchanged. The import map already maps `'three'` to the vendored module, so the loader's `from 'three'` import works.
+- **Two CC0 rigged humans** (Quaternius "Ultimate Animated Characters" pack, CC0 1.0, license + sources recorded in `game/assets/LICENSES.md`): `game/assets/Casual_Male.glb` (1,752,060 B, the player Jax) + `game/assets/Casual_Female.glb` (1,759,956 B, NPC[0]). Each has 17 animations (Idle, Walk, Run, Jump, Punch, Death, ...). No GTA V asset is used or copied.
+- **`game/src/glbCharacter.js` (new, 3,408 B):** `loadGLBCharacter(url, targetHeight)` — loads a GLB, measures its bind-pose bounding box, scales it to 1.8 m with feet at y=0, and drives Idle / Walk / Run / Jump with an `AnimationMixer` (crossfade 0.25 s). Returns `null` on failure so the caller keeps the procedural character as an offline-safe fallback.
+- **Player:** `main3d.js` loads `Casual_Male.glb` async; when ready it swaps `char.group` to the GLB group (visibility copied from the procedural group, so enter/exit-car hiding still works) and drives the mixer instead of `animateCharacter`. If the GLB fails, the procedural character stays. Measured: native height 1.88 m, scale 0.958.
+- **NPC:** `npcs.js` loads `Casual_Female.glb` async for NPC[0] only (the other 9 stay procedural). The update loop drives the GLB mixer instead of the procedural limb swing for that NPC; `knockDown` / `reset` still work on the group. Measured: NPC mixer plays Walk while walking, Idle while parked.
+- **Staged shots:** `?shot=char` (player close-up, front-on) and `?shot=npc` (NPC[0] close-up, player hidden) added to `stageShot`. The NPC is parked at the camera look point with speed 0 so it does not wander off before the shot. A `hideChar` flag was needed because the main loop re-shows the player every frame on foot (`char.group.visible = true` in the on-foot branch) — the flag is only set by the `npc` shot.
+- **Comparison screenshots** in `screenshots-visual/` (NOT in the dossier; `shots.json` unchanged, still the 4 Stage 4 shots): `char-before.jpg` / `char-after.jpg` and `npc-before.jpg` / `npc-after.jpg`, same framing each pair. The `before` shots were taken with the GLBs temporarily hidden (procedural fallback, 2 expected 404 console errors per shot from the missing files — the loader catches them and falls back cleanly).
+
+### Tests (headless Chromium 1255, SwiftShader, 1280×720)
+- **Full Stage 4 regression: 55/55 checks PASS, 0 console errors, 0 page errors, 0 failed requests, 0 external requests (offline verified).** Walk/run/jump/save/load/drive/police chase/helicopter/combat/NPCs/missions/audio all still pass. The GLBs load (HTTP 200) and the mixers advance (mixerTime increases; player Idle, NPC Walk/Idle as expected).
+- **GLB load:** player `loaded: true`, 17 clips, `currentAnim: idle`, `mixerTime: 0.2`, scale 0.958, nativeHeight 1.88. NPC `loaded: true`, 17 clips, `currentAnim: walk` while walking / `idle` while parked.
+- **FPS:** meter reports 1 (SwiftShader, honest — verifies correctness, NOT real-hardware FPS).
+- **Before/after (viewed):** before = box character (red jacket, rectangular torso/head, blocky limbs); after = proportional human (natural head + brown hair, fitted blue shirt, natural limbs, proper proportions, faces the camera). The improvement is clear and significant. The NPC pair shows the same jump (box pedestrian → long-haired proportional female).
+- **Dossier screenshots re-taken by the Stage 4 test** (1-onfoot 68,931 B, 2-chase 119,609 B, 3-city 144,345 B, 4-beach 67,948 B — all ≤256 KiB); 1-onfoot now shows the GLB character.
+
+### Dossier + kit check
+- Dossier valid: schema makefun/dossier/v1, 4 images, text **159,811 bytes** of the 163,840 cap (`/output/dossier.json`, 699,829 bytes total). Repo 12 MB total (game/assets 3.4 MB, game/vendor 2.3 MB) — well under the 64 MB cap.
+- **Kit check: 4 passed, 0 failed, 17 skipped, 5 checked at submission.**
+
+### Errors / obstacles found (all fixed, or honestly reported)
+1. **Quaternius download goes through itch.io** (JS buy button, no direct link) — worked around via the pack's CDN mirror on app.cinevva.com, which hosts the same CC0 files with direct `.glb` links. License verified on the Quaternius pack page (CC0) and the Cinevva guide (CC0).
+2. **GLTFLoader needs two utils files** (`BufferGeometryUtils.js`, `SkeletonUtils.js`) — vendored alongside it, same r187, unmodified.
+3. **`cam.dist = 1.0` framed only the character's legs** (the look point is 3 m ahead of the player, so a closer camera looks too steeply down) — reverted to dist 2.5, which frames the full body.
+4. **The main loop re-shows the player every frame on foot**, so `char.group.visible = false` in the `npc` shot did not hide the player (it appeared giant in the foreground) — fixed with a `hideChar` flag that the loop respects; only the `npc` shot sets it.
+5. **NPC parked 1 m short of the camera look point sat below the frame edge** (31° off the look direction) — moved it exactly onto the look point (player.z − 3).
+6. **The GLB characters read dark** (face nearly black at dusk, 18:42) — the shape/proportions are clear, but the face is poorly lit. Lighting is a later stage (not fixed here); noted as a limitation.
+
+### Remaining shortcomings / risks
+- Characters read dark at dusk (face poorly lit) — needs the lighting stage.
+- The NPC in the after shot faces slightly off-profile (not dead-on at the camera); the player faces the camera correctly.
+- **Dossier text is at 159,811 / 163,840 bytes (97.5%) — only ~4 KB of headroom.** Future visual stages (cars, city, beach, lighting) must keep added code small or the dossier will exceed the text cap. The binary GLBs count toward the 64 MB total (12 MB now), not the text cap.
+- Only 1 of 10 NPCs is a GLB; the other 9 are still procedural boxes (by design for this prototype).
+- The `char` / `npc` staged shots are test-only (not in `shots.json` / the dossier).
+
+### Estimated completion time (visual prototype, actual)
+- Character prototype done 22 Nov ~20:20 WIB (model hunt + GLTFLoader + loader module + wiring + before/after shots + fixes + full regression 55/55 + dossier + kit check + this record + commit + push). **Do NOT continue to cars/city without Mot's evaluation of this prototype.** If Mot approves, the Stage 4 estimate for the remaining visual work stands: cars ~1.5–2 h, city ~2–3 h, beach + lighting ~1.5–2 h, testing + before/after ~1 h (total ~6–8 h for cars/city/beach/lighting, plus the character work already done). **Deadline for the final submission: 24 Nov 22:00 WIB** (gta6-01 closes). Do NOT seal or submit without Mot's approval.

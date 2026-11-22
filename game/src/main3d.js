@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { buildCity, districtName, HALF } from './city.js';
 import { buildCharacter, animateCharacter } from './character.js';
+import { loadGLBCharacter } from './glbCharacter.js';
 import { createVehicles } from './vehicles.js';
 import { createPolice } from './police.js';
 import { createNPCs } from './npcs.js';
@@ -64,6 +65,25 @@ const vehicles = createVehicles(scene, city);
 // --- the player ---
 const char = buildCharacter();
 scene.add(char.group);
+// Visual prototype: staged 'npc' shot hides the player so only the NPC is
+// in frame (the loop re-shows the player every frame on foot, so a flag is
+// needed — see the loop's on-foot branch).
+let hideChar = false;
+// --- visual prototype: rigged GLB player (CC0 Quaternius Casual Male) ---
+// Loads async; the procedural character stays until the GLB is ready, and
+// stays permanently if the GLB fails to load (offline-safe fallback).
+let glbPlayer = null;
+loadGLBCharacter('./assets/Casual_Male.glb').then((c) => {
+  if (!c) return;
+  const wasVisible = char.group.visible;
+  scene.remove(char.group);
+  char.group = c.group;
+  char.group.visible = wasVisible;
+  scene.add(char.group);
+  char.group.position.set(player.x, player.y, player.z);
+  char.group.rotation.y = player.yaw;
+  glbPlayer = c;
+});
 const player = {
   x: 0,
   z: 26,
@@ -567,7 +587,8 @@ function updatePlayer(dt) {
   player.walkPhase += player.speed * dt * 1.6;
   char.group.position.set(player.x, player.y, player.z);
   char.group.rotation.y = player.yaw;
-  animateCharacter(char, player.walkPhase, player.speed, !player.onGround, dt);
+  if (glbPlayer) glbPlayer.update(dt, player.speed, !player.onGround);
+  else animateCharacter(char, player.walkPhase, player.speed, !player.onGround, dt);
 }
 
 // ------------------------------------------------------------------ camera
@@ -680,6 +701,43 @@ function stageShot(name) {
     cam.yaw = Math.PI;
     cam.pitch = 0.3;
     cam.dist = 7.5;
+  } else if (name === 'char') {
+    // Visual prototype close-up: player faces the camera (yaw PI), camera
+    // in front (cam.yaw PI, dist 2.5) so the full body is in frame.
+    // (dist 1.0 framed only the legs — the look point is 3 m ahead of the
+    // player, so a closer camera looks too steeply down.) Used for the
+    // before/after character comparison.
+    player.x = 0;
+    player.z = 26;
+    player.yaw = Math.PI;
+    cam.yaw = Math.PI;
+    cam.pitch = 0.22;
+    cam.dist = 2.5;
+  } else if (name === 'npc') {
+    // Visual prototype NPC close-up: frame NPC[0] (the GLB female) from
+    // the front. The NPC is parked at the open onfoot spot with speed 0
+    // (so it does not wander off before the shot) and turned to face the
+    // camera; the player is hidden so only the NPC is in frame.
+    const n0 = npcs.list[0];
+    if (n0) {
+      // Park the NPC exactly on the camera look point (player.z - 3), so
+      // it is centred in frame; 1 m closer puts it below the frame edge.
+      n0.x = 0;
+      n0.z = 27;
+      n0.heading = Math.PI;
+      n0.speed = 0;
+      n0.state = 'walk';
+      n0.targetX = 0;
+      n0.targetZ = 27;
+      player.x = 0;
+      player.z = 30;
+      player.yaw = Math.PI;
+      cam.yaw = Math.PI;
+      cam.pitch = 0.22;
+      cam.dist = 2.5;
+      hideChar = true;
+      char.group.visible = false;
+    }
   } else if (name === 'city') {
     player.x = 0;
     player.z = 26;
@@ -811,7 +869,7 @@ function loop(now) {
     } else {
       updatePlayer(dt);
       vehicles.update(dt, keys, player);
-      char.group.visible = true;
+      char.group.visible = !hideChar;
     }
     // Stage 3 systems.
     police.update(dt);
@@ -971,6 +1029,17 @@ window.__vb = {
   },
   get fps() {
     return Math.round(fpsValue);
+  },
+  get glbPlayer() {
+    return glbPlayer
+      ? { loaded: true, clips: glbPlayer.clips, currentAnim: glbPlayer.currentAnim, mixerTime: Math.round(glbPlayer.mixerTime * 100) / 100, scale: Math.round(glbPlayer.scale * 1000) / 1000, nativeHeight: Math.round(glbPlayer.nativeHeight * 100) / 100 }
+      : { loaded: false };
+  },
+  get glbNpc() {
+    const n0 = npcs.list[0];
+    return n0 && n0.glb
+      ? { loaded: true, clips: n0.glb.clips, currentAnim: n0.glb.currentAnim, mixerTime: Math.round(n0.glb.mixerTime * 100) / 100 }
+      : { loaded: false };
   },
   buildingCount: city.buildingCount,
   colliderCount: city.colliders.length,

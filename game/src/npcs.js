@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { clamp, lerp, damp, angleDelta, mulberry32, pick, rand, resolveCollisions } from './util.js';
 import { HALF, ROADS } from './city.js';
+import { loadGLBCharacter } from './glbCharacter.js';
 
 const NPC_COUNT = 10;
 const SHIRTS = [0xe74c3c, 0x3498db, 0x2ecc71, 0xf1c40f, 0x9b59b6, 0xe67e22, 0x1abc9c, 0xfd79a8, 0x6c5ce7, 0x00cec9];
@@ -127,6 +128,21 @@ export function createNPCs(scene, city, player, vehicles) {
     npcs.push(npc);
   }
 
+  // --- visual prototype: NPC[0] uses the rigged GLB female (CC0
+  // Quaternius Casual Female). Loads async; the procedural NPC stays until
+  // the GLB is ready, and stays permanently if it fails to load.
+  loadGLBCharacter('./assets/Casual_Female.glb').then((c) => {
+    if (!c) return;
+    const npc = npcs[0];
+    if (!npc) return;
+    scene.remove(npc.group);
+    npc.group = c.group;
+    npc.glb = c;
+    npc.group.position.set(npc.x, 0, npc.z);
+    npc.group.rotation.y = npc.heading;
+    scene.add(npc.group);
+  });
+
   /** Knock an NPC down (punch / pistol / car hit). It gets up and flees. */
   function knockDown(npc) {
     if (!npc || npc.state === 'down') return;
@@ -203,16 +219,21 @@ export function createNPCs(scene, city, player, vehicles) {
       const resolved = resolveCollisions(npc.x, npc.z, 0.4, city.colliders);
       npc.x = clamp(resolved.x, -HALF + 4, HALF - 4);
       npc.z = clamp(resolved.z, -HALF + 4, HALF - 4);
-      // Mesh + walk swing.
+      // Mesh + walk swing (GLB NPCs drive their AnimationMixer instead).
       npc.group.position.set(npc.x, 0, npc.z);
       npc.group.rotation.y = npc.heading;
-      const swing = Math.sin(npc.walkPhase) * 0.55;
-      npc.legs[0].hip.rotation.x = swing;
-      npc.legs[1].hip.rotation.x = -swing;
-      npc.legs[0].knee.rotation.x = Math.max(0, -Math.sin(npc.walkPhase)) * 0.7;
-      npc.legs[1].knee.rotation.x = Math.max(0, Math.sin(npc.walkPhase)) * 0.7;
-      npc.arms[0].shoulder.rotation.x = -swing * 0.7;
-      npc.arms[1].shoulder.rotation.x = swing * 0.7;
+      if (npc.glb) {
+        const spd = npc.state === 'flee' ? 3.4 : npc.speed;
+        npc.glb.update(d, spd, false);
+      } else {
+        const swing = Math.sin(npc.walkPhase) * 0.55;
+        npc.legs[0].hip.rotation.x = swing;
+        npc.legs[1].hip.rotation.x = -swing;
+        npc.legs[0].knee.rotation.x = Math.max(0, -Math.sin(npc.walkPhase)) * 0.7;
+        npc.legs[1].knee.rotation.x = Math.max(0, Math.sin(npc.walkPhase)) * 0.7;
+        npc.arms[0].shoulder.rotation.x = -swing * 0.7;
+        npc.arms[1].shoulder.rotation.x = swing * 0.7;
+      }
     }
   }
 
