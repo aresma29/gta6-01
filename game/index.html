@@ -3,148 +3,114 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="icon" href="data:,">
 <title>VICE BAY — Free Roam</title>
+<link rel="icon" href="data:,">
 <style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  html, body { width: 100%; height: 100%; overflow: hidden; background: #1a1038; font-family: Arial, Helvetica, sans-serif; }
-  #game-canvas { position: fixed; inset: 0; }
-  #game-canvas canvas { display: block; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #1a0a2e; font-family: Arial, Helvetica, sans-serif; }
+  #game-canvas { display: block; width: 100%; height: 100%; }
   .hidden { display: none !important; }
-
-  /* ---- HUD ---- */
-  #hud { position: fixed; inset: 0; pointer-events: none; color: #fff; z-index: 5; }
-  .panel { background: rgba(10, 10, 24, 0.55); border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 8px; padding: 8px 12px; backdrop-filter: blur(2px); }
-  .gold { color: #ffd24a; }
-
-  #hud-topleft { position: absolute; top: 12px; left: 12px; }
-  #hud-money { font-size: 26px; font-weight: bold; color: #7aff8a; text-shadow: 0 2px 4px rgba(0,0,0,0.7); }
-  #hud-stars { font-size: 22px; letter-spacing: 2px; color: #ffd24a; text-shadow: 0 2px 4px rgba(0,0,0,0.7); margin-top: 2px; }
-  #hud-health { margin-top: 6px; width: 180px; }
-  #hud-health .bar { height: 10px; background: rgba(0,0,0,0.6); border-radius: 5px; overflow: hidden; border: 1px solid rgba(255,255,255,0.25); }
-  #hud-health-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #3aff6a, #7aff8a); }
-  #hud-health-num { font-size: 12px; color: #cfe8cf; margin-top: 2px; }
-  #hud-car { font-size: 13px; margin-top: 4px; color: #e8e8f0; text-shadow: 0 2px 4px rgba(0,0,0,0.7); }
-  #hud-car .gold { font-weight: bold; }
-
-  #hud-dispatch { position: absolute; top: 12px; right: 12px; width: 250px; }
-  #hud-dispatch h3 { font-size: 13px; letter-spacing: 1px; color: #ffd24a; margin-bottom: 4px; }
-  .dispatch-row { display: flex; justify-content: space-between; font-size: 13px; padding: 2px 0; }
-  .dispatch-standby { color: #7aff8a; font-weight: bold; }
-  .dispatch-alert { color: #ff5a5a; font-weight: bold; }
-  .dispatch-note { font-size: 12px; color: #b8b8c8; margin-top: 4px; }
-
-  #hud-mission { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); text-align: center; min-width: 320px; }
-  #hud-mission-title { font-size: 15px; font-weight: bold; letter-spacing: 2px; color: #ffd24a; }
-  #hud-mission-text { font-size: 13px; color: #e8e8f0; margin-top: 2px; }
-
-  #hud-dialogue { position: absolute; left: 12px; bottom: 218px; width: 300px; }
-  #hud-dialogue-name { font-size: 13px; font-weight: bold; color: #ff9a5a; letter-spacing: 1px; }
-  #hud-dialogue-text { font-size: 13px; color: #f0f0f8; margin-top: 2px; font-style: italic; }
-
-  #hud-minimap-wrap { position: absolute; left: 12px; bottom: 12px; text-align: center; }
-  #hud-minimap { border-radius: 50%; border: 3px solid #ffd24a; box-shadow: 0 0 0 2px rgba(0,0,0,0.5), 0 4px 12px rgba(0,0,0,0.6); background: #22222e; }
-  #hud-place { margin-top: 6px; font-size: 13px; font-weight: bold; letter-spacing: 1px; text-shadow: 0 2px 4px rgba(0,0,0,0.8); }
-  #hud-place span { color: #c8c8d8; font-weight: normal; }
-
-  #hud-speed { position: absolute; right: 12px; bottom: 12px; text-align: right; }
-  #hud-speed .num { font-size: 42px; font-weight: bold; line-height: 1; text-shadow: 0 2px 6px rgba(0,0,0,0.8); }
-  #hud-speed .unit { font-size: 13px; color: #c8c8d8; letter-spacing: 2px; }
-  #hud-speed .mode { font-size: 13px; color: #ffd24a; letter-spacing: 1px; margin-top: 2px; }
-
-  #hud-controls { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); font-size: 12px; color: rgba(255,255,255,0.85); text-shadow: 0 1px 3px rgba(0,0,0,0.9); white-space: nowrap; }
-  #hud-controls b { color: #ffd24a; }
-  #hud-prompt { position: absolute; bottom: 44px; left: 50%; transform: translateX(-50%); font-size: 16px; font-weight: bold; color: #ffd24a; text-shadow: 0 2px 6px rgba(0,0,0,0.9); letter-spacing: 1px; white-space: nowrap; }
-
-  #hud-toast { position: absolute; top: 22%; left: 50%; transform: translateX(-50%); font-size: 20px; font-weight: bold; color: #ffd24a; text-shadow: 0 2px 8px rgba(0,0,0,0.9); letter-spacing: 1px; }
-  #hud-muted { position: absolute; top: 64px; left: 12px; font-size: 12px; color: #ff9a9a; letter-spacing: 1px; }
-
-  /* ---- Menus ---- */
-  .menu { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: radial-gradient(ellipse at center, rgba(30,10,60,0.55), rgba(10,5,25,0.85)); z-index: 10; color: #fff; text-align: center; }
-  .menu h1 { font-size: 72px; font-weight: bold; letter-spacing: 6px; background: linear-gradient(180deg, #7ad2ff, #ff5a8a 60%, #ffd24a); -webkit-background-clip: text; background-clip: text; color: transparent; text-shadow: 0 4px 24px rgba(255,90,138,0.35); }
-  .menu h2 { font-size: 26px; letter-spacing: 8px; color: #ff9ad2; font-style: italic; margin-top: -6px; }
-  .menu p { font-size: 15px; color: #d8d8e8; margin-top: 14px; max-width: 520px; line-height: 1.5; }
-  .menu .btns { margin-top: 26px; display: flex; flex-direction: column; gap: 10px; align-items: center; }
-  .menu button { pointer-events: auto; cursor: pointer; font-size: 16px; font-weight: bold; letter-spacing: 2px; color: #1a1038; background: linear-gradient(180deg, #ffd24a, #ff9a3c); border: none; border-radius: 8px; padding: 12px 34px; min-width: 260px; box-shadow: 0 4px 16px rgba(0,0,0,0.5); }
-  .menu button:hover { filter: brightness(1.1); }
-  .menu button.secondary { background: rgba(255,255,255,0.16); color: #fff; border: 1px solid rgba(255,255,255,0.4); }
-  .menu .hint { margin-top: 22px; font-size: 13px; color: #b8b8c8; line-height: 1.7; }
-  .menu .hint b { color: #ffd24a; }
+  .panel { position: absolute; background: rgba(10, 8, 24, 0.72); border: 1px solid rgba(255, 215, 106, 0.35); border-radius: 8px; color: #f2ede0; padding: 8px 12px; backdrop-filter: blur(2px); }
+  .panel h3 { color: #ffd76a; font-size: 12px; letter-spacing: 1px; margin-bottom: 4px; }
+  /* Top-left: money, stars, health */
+  #hud-topleft { top: 12px; left: 12px; min-width: 170px; }
+  #hud-money { color: #7dff8a; font-size: 26px; font-weight: bold; }
+  #hud-stars { color: #ffd76a; font-size: 20px; letter-spacing: 2px; }
+  #hud-health-bar { width: 150px; height: 10px; background: #333; border-radius: 5px; margin-top: 4px; overflow: hidden; }
+  #hud-health-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #37d67a, #7dff8a); }
+  #hud-health-num { font-size: 11px; color: #bbb; }
+  #hud-weapon-slots { margin-top: 6px; font-size: 12px; color: #ccc; }
+  #hud-weapon-slots b { color: #ffd76a; }
+  #hud-weapon-slots .locked { color: #666; }
+  /* Top-centre: banner + mission */
+  #hud-banner { top: 12px; left: 50%; transform: translateX(-50%); text-align: center; min-width: 340px; }
+  #hud-banner-title { color: #ffd76a; font-size: 15px; letter-spacing: 2px; font-weight: bold; }
+  #hud-banner-sub { font-size: 12px; color: #ddd; margin-top: 2px; }
+  #hud-mission { top: 76px; left: 50%; transform: translateX(-50%); text-align: center; font-size: 12px; color: #ffd76a; min-width: 340px; }
+  /* Top-right: dispatch board */
+  #hud-dispatch-panel { top: 12px; right: 12px; min-width: 210px; }
+  #hud-dispatch { font-size: 12px; line-height: 1.5; }
+  #hud-dispatch .standby { color: #7dff8a; font-weight: bold; }
+  /* Bottom-left: dialogue above the minimap */
+  #hud-dialogue { bottom: 250px; left: 12px; max-width: 300px; font-size: 13px; }
+  #hud-dialogue .who { color: #ff9a4d; font-weight: bold; }
+  #hud-minimap-wrap { bottom: 12px; left: 12px; width: 220px; height: 220px; border-radius: 50%; overflow: hidden; border: 3px solid rgba(255, 215, 106, 0.6); padding: 0; background: #14141c; }
+  #hud-minimap { width: 100%; height: 100%; display: block; }
+  /* Bottom-centre: controls */
+  #hud-controls { bottom: 12px; left: 50%; transform: translateX(-50%); font-size: 12px; color: #ddd; white-space: nowrap; }
+  #hud-controls b { color: #ffd76a; }
+  /* Bottom-right: speed + location */
+  #hud-speed { bottom: 12px; right: 12px; text-align: right; min-width: 170px; }
+  #hud-speed-num { font-size: 40px; font-weight: bold; color: #fff; line-height: 1; }
+  #hud-speed-mode { font-size: 12px; color: #ffd76a; }
+  #hud-location { font-size: 12px; color: #ddd; margin-top: 4px; }
+  /* Title + pause overlays */
+  .overlay { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(10, 4, 24, 0.55); color: #f2ede0; z-index: 10; }
+  .overlay h1 { font-size: 64px; letter-spacing: 6px; color: #ff5fd0; text-shadow: 0 0 24px rgba(255, 95, 208, 0.7), 0 2px 0 #7a1052; }
+  .overlay h2 { font-size: 20px; letter-spacing: 8px; color: #ffd76a; margin: 6px 0 24px; }
+  .overlay p { font-size: 14px; color: #ddd; margin-bottom: 20px; }
+  .overlay button { display: block; margin: 6px auto; min-width: 240px; padding: 12px 20px; font-size: 16px; font-weight: bold; letter-spacing: 1px; color: #1a0a2e; background: #ffd76a; border: none; border-radius: 8px; cursor: pointer; }
+  .overlay button:hover { background: #ffe08a; }
+  .overlay button.secondary { background: rgba(255, 255, 255, 0.16); color: #f2ede0; border: 1px solid rgba(255, 255, 255, 0.35); }
+  .overlay .fine { font-size: 11px; color: #999; margin-top: 18px; }
 </style>
-</head>
-<body>
-<div id="game-canvas"></div>
-
-<div id="hud">
-  <div id="hud-topleft">
-    <div id="hud-money">$250</div>
-    <div id="hud-stars">☆☆☆☆☆</div>
-    <div id="hud-health">
-      <div class="bar"><div id="hud-health-fill"></div></div>
-      <div id="hud-health-num">100</div>
-    </div>
-    <div id="hud-car" class="hidden"><span class="gold">CAR</span> <span id="hud-car-name">—</span> · <span id="hud-car-cond">—</span>%</div>
-  </div>
-
-  <div id="hud-dispatch" class="panel">
-    <h3>VBPD DISPATCH</h3>
-    <div id="hud-dispatch-body"></div>
-  </div>
-
-  <div id="hud-mission" class="panel">
-    <div id="hud-mission-title">VICE BAY — FREE ROAM</div>
-    <div id="hud-mission-text">Cars are here. The police arrive in Stage 3. Missions arrive in Stage 4.</div>
-  </div>
-
-  <div id="hud-dialogue" class="panel">
-    <div id="hud-dialogue-name">RICO — FIXER</div>
-    <div id="hud-dialogue-text">"Welcome to Vice Bay, Jax. The city is yours — for now."</div>
-  </div>
-
-  <div id="hud-minimap-wrap">
-    <canvas id="hud-minimap" width="180" height="180"></canvas>
-    <div id="hud-place"><span id="hud-location">DOWNTOWN</span> · <span id="hud-clock">18:42</span> · <span id="hud-radio">VICE FM 98.5</span></div>
-  </div>
-
-  <div id="hud-speed">
-    <div class="num"><span id="hud-speed-num">0</span></div>
-    <div class="unit">KM/H</div>
-    <div class="mode" id="hud-speed-mode">ON FOOT</div>
-  </div>
-
-  <div id="hud-prompt" class="hidden"></div>
-  <div id="hud-controls"><b>WASD</b> move · <b>Shift</b> run · <b>Space</b> jump · <b>E</b> enter / exit car · <b>drag mouse</b> look · <b>P</b> pause · <b>M</b> mute</div>
-  <div id="hud-toast" class="hidden"></div>
-  <div id="hud-muted" class="hidden">MUTED — press M</div>
-</div>
-
-<div id="title-screen" class="menu">
-  <h1>VICE BAY</h1>
-  <h2>Free Roam</h2>
-  <p>A 3D open-world crime game in a dusk coastal city. Walk the streets of Vice Bay, drive the cars, and get ready — the police and the jobs come next.</p>
-  <div class="btns">
-    <button id="btn-start">START</button>
-    <button id="btn-continue" class="secondary hidden">CONTINUE (LOAD SAVE)</button>
-  </div>
-  <div class="hint"><b>WASD</b> move &nbsp;·&nbsp; <b>Shift</b> run &nbsp;·&nbsp; <b>Space</b> jump &nbsp;·&nbsp; <b>E</b> enter / exit car &nbsp;·&nbsp; <b>drag mouse</b> to look<br>Desktop Chrome · keyboard + mouse · plays offline</div>
-</div>
-
-<div id="pause-menu" class="menu hidden">
-  <h1 style="font-size:44px">PAUSED</h1>
-  <p>Take a breath. The city waits.</p>
-  <div class="btns">
-    <button id="btn-resume">RESUME</button>
-    <button id="btn-save" class="secondary">SAVE GAME</button>
-    <button id="btn-load" class="secondary">LOAD GAME</button>
-    <button id="btn-restart" class="secondary">RESTART</button>
-    <button id="btn-mute" class="secondary">TOGGLE SOUND (M)</button>
-    <button id="btn-quit" class="secondary">QUIT TO TITLE</button>
-  </div>
-</div>
-
 <script type="importmap">
 { "imports": { "three": "./vendor/three/three.module.min.js" } }
 </script>
+</head>
+<body>
+<canvas id="game-canvas"></canvas>
+
+<div id="hud-topleft" class="panel">
+  <div id="hud-money">$250</div>
+  <div id="hud-stars">☆☆☆☆☆</div>
+  <div id="hud-health-bar"><div id="hud-health-fill"></div></div>
+  <div id="hud-health-num">100</div>
+  <div id="hud-weapon-slots"><b>FISTS</b> &nbsp; <span class="locked">BAT</span> &nbsp; <span class="locked">PISTOL</span> &nbsp; <span class="locked">SMG</span></div>
+</div>
+
+<div id="hud-banner" class="panel">
+  <div id="hud-banner-title">VICE BAY — FREE ROAM</div>
+  <div id="hud-banner-sub">Explore the city. Cars arrive in Stage 2. The police arrive in Stage 3. Missions arrive in Stage 4.</div>
+</div>
+<div id="hud-mission" class="panel"><span id="hud-mission-text">FREE ROAM — Explore the city. Missions arrive in Stage 4.</span></div>
+
+<div id="hud-dispatch-panel" class="panel">
+  <h3>VBPD DISPATCH</h3>
+  <div id="hud-dispatch"><span class="standby">STANDBY</span> &nbsp; No active units<br>Patrols on routine rounds.</div>
+</div>
+
+<div id="hud-dialogue" class="panel"><span class="who">RICO — FIXER</span><br><span id="hud-dialogue-text">"Welcome to Vice Bay, Jax. The city is yours — for now."</span></div>
+
+<div id="hud-minimap-wrap" class="panel"><canvas id="hud-minimap" width="220" height="220"></canvas></div>
+
+<div id="hud-controls" class="panel"><b>WASD</b> move · <b>Shift</b> run · <b>Space</b> jump · <b>drag mouse</b> look · <b>P</b> pause · <b>M</b> <span id="hud-mute-state">SOUND ON</span></div>
+
+<div id="hud-speed" class="panel">
+  <div><span id="hud-speed-num">0</span> <span style="font-size:12px;color:#ccc">KM/H</span></div>
+  <div id="hud-speed-mode">ON FOOT</div>
+  <div id="hud-location"><span id="hud-district">VICE PLAZA</span> · <span id="hud-clock">18:42</span> · <span id="hud-radio">VICE FM 98.5</span></div>
+</div>
+
+<div id="title-screen" class="overlay">
+  <h1>VICE BAY</h1>
+  <h2>FREE ROAM</h2>
+  <p>A sun-soaked coastal city. Walk it, own it — the cars, the cops and the jobs come next.</p>
+  <button id="btn-start">START</button>
+  <button id="btn-continue" class="secondary hidden">CONTINUE (SAVE)</button>
+  <div class="fine">Desktop Chrome · keyboard + mouse · fully offline · Three.js</div>
+</div>
+
+<div id="pause-menu" class="overlay hidden">
+  <h1 style="font-size:42px">PAUSED</h1>
+  <button id="btn-resume">RESUME</button>
+  <button id="btn-save" class="secondary">SAVE</button>
+  <button id="btn-load" class="secondary">LOAD</button>
+  <button id="btn-restart" class="secondary">RESTART</button>
+  <button id="btn-mute" class="secondary">MUTE / UNMUTE</button>
+  <button id="btn-quit" class="secondary">QUIT TO TITLE</button>
+</div>
+
 <script type="module" src="./src/main3d.js"></script>
 </body>
 </html>
