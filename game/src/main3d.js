@@ -5,6 +5,11 @@ import * as THREE from 'three';
 import { buildCity, districtName, HALF } from './city.js';
 import { buildCharacter, animateCharacter } from './character.js';
 import { createVehicles } from './vehicles.js';
+import { createPolice } from './police.js';
+import { createNPCs } from './npcs.js';
+import { createCombat } from './combat.js';
+import { createDamage } from './damage.js';
+import { createNeon } from './neon.js';
 import { clamp, lerp, damp, angleDelta, resolveCollisions } from './util.js';
 
 const WALK_SPEED = 5;
@@ -71,6 +76,13 @@ const player = {
   wanted: 0,
 };
 
+// --- Stage 3 systems: damage, neon, police, NPCs, combat ---
+const damage = createDamage(scene);
+const neon = createNeon(scene);
+const police = createPolice(scene, city, vehicles, player, damage);
+const npcs = createNPCs(scene, city, player, vehicles);
+const combat = createCombat(scene, player, npcs, police, damage);
+
 // --- camera rig ---
 const cam = {
   yaw: Math.PI,
@@ -95,6 +107,8 @@ window.addEventListener('keydown', (e) => {
   keys[e.code] = true;
   if (e.code === 'Space') jumpQueued = true;
   if (e.code === 'KeyE') toggleCar();
+  if (e.code === 'KeyQ') combat.switchWeapon();
+  if (e.code === 'KeyF') combat.attack();
   if (e.code === 'KeyP' || e.code === 'Escape') togglePause();
   if (e.code === 'KeyM') toggleMute();
   if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
@@ -147,6 +161,9 @@ const hud = {
   carName: el('hud-car-name'),
   carCond: el('hud-car-cond'),
   carPrompt: el('hud-car-prompt'),
+  weaponSlots: el('hud-weapon-slots'),
+  dialogueText: el('hud-dialogue-text'),
+  fps: el('hud-fps'),
   bannerTitle: el('hud-banner-title'),
   bannerSub: el('hud-banner-sub'),
   title: el('title-screen'),
@@ -156,6 +173,10 @@ const hud = {
 const mmCtx = hud.minimap.getContext('2d');
 let muted = false;
 let clockMin = 18 * 60 + 42; // 18:42, advances 1 min per 10 s of play
+let wastedAt = 0; // performance.now() of the last WASTED respawn (0 = none)
+let fpsValue = 0; // measured FPS, updated once per second in the loop
+let fpsFrames = 0;
+let fpsLastT = performance.now();
 
 function fmtClock() {
   const h = Math.floor(clockMin / 60) % 24;
@@ -234,6 +255,31 @@ function drawMinimap() {
     ctx.arc(vx, vz, 4, 0, Math.PI * 2);
     ctx.fill();
   }
+  // Police dots (red), helicopter (white), NPCs (pale).
+  for (const car of police.cars) {
+    const [vx, vz] = toMap(car.x, car.z);
+    ctx.fillStyle = '#ff4d4d';
+    ctx.beginPath();
+    ctx.arc(vx, vz, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  if (police.heliActive && police.helicopter) {
+    const [vx, vz] = toMap(police.helicopter.x, police.helicopter.z);
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(vx, vz, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#ff4d4d';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+  for (const npc of npcs.list) {
+    const [vx, vz] = toMap(npc.x, npc.z);
+    ctx.fillStyle = '#d8d8d8';
+    ctx.beginPath();
+    ctx.arc(vx, vz, 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
 }
 
 function updateHUD() {
@@ -268,6 +314,34 @@ function updateHUD() {
     }
   }
   hud.muteState.textContent = muted ? 'MUTED' : 'SOUND ON';
+  // Dispatch board: named units with roles + live distances, or STANDBY.
+  const units = police.getUnits();
+  if (units.length === 0) {
+    hud.dispatch.innerHTML = '<span class="standby">STANDBY</span> &nbsp; No active units<br>Patrols on routine rounds.';
+  } else {
+    hud.dispatch.innerHTML = units
+      .map((u) => `${u.id} &nbsp; <b style="color:#ff8a8a">${u.role}</b> &nbsp; ${u.dist} m`)
+      .join('<br>');
+  }
+  // Weapon slots: current weapon highlighted, SMG locked.
+  const w = combat.weapon;
+  hud.weaponSlots.innerHTML =
+    ['FISTS', 'BAT', 'PISTOL'].map((name) => (name === w ? `<b>${name}</b>` : name)).join(' &nbsp; ') +
+    ' &nbsp; <span class="locked">SMG</span>';
+  // Mission line: WASTED flash, then wanted-aware free roam.
+  if (wastedAt > 0 && performance.now() - wastedAt < 5000) {
+    hud.mission.textContent = 'WASTED — You woke up at the Hospital. The VBPD let you off this time.';
+  } else if (player.wanted >= 3) {
+    hud.mission.textContent = 'WANTED — Lose the VBPD. Missions arrive in Stage 4.';
+  } else {
+    hud.mission.textContent = 'FREE ROAM — Steal a car, outrun the VBPD. Missions arrive in Stage 4.';
+  }
+  // Rico warns the player when the heat is on.
+  hud.dialogueText.textContent = player.wanted >= 3
+    ? '"The cops are all over you, Jax. Lose them — fast."'
+    : '"Welcome to Vice Bay, Jax. The city is yours — for now."';
+  // FPS meter (honest: ~1 FPS under SwiftShader, ~60 on a real GPU).
+  if (hud.fps) hud.fps.textContent = 'FPS ' + Math.round(fpsValue);
   drawMinimap();
 }
 
@@ -323,6 +397,8 @@ function toggleCar() {
       char.group.visible = false;
       driveYaw = best.heading + Math.PI;
       player.yaw = best.heading;
+      // Stealing a car is a crime: +1 star.
+      police.addHeat(20, 'theft');
     }
   }
 }
@@ -368,6 +444,10 @@ el('btn-load').addEventListener('click', () => {
 });
 el('btn-restart').addEventListener('click', () => {
   vehicles.reset();
+  police.reset();
+  npcs.reset();
+  combat.reset();
+  damage.reset();
   char.group.visible = true;
   player.x = 0;
   player.z = 26;
@@ -377,6 +457,7 @@ el('btn-restart').addEventListener('click', () => {
   player.health = 100;
   player.money = 250;
   player.wanted = 0;
+  wastedAt = 0;
   clockMin = 18 * 60 + 42;
   mode = 'playing';
   hud.pause.classList.add('hidden');
@@ -441,6 +522,16 @@ function updatePlayer(dt) {
 }
 
 // ------------------------------------------------------------------ camera
+/** Small random camera offset while a police ram is shaking the view. */
+function applyShake() {
+  const s = police.shake;
+  if (s > 0) {
+    camera.position.x += (Math.random() - 0.5) * 0.35 * s;
+    camera.position.y += (Math.random() - 0.5) * 0.25 * s;
+    camera.position.z += (Math.random() - 0.5) * 0.35 * s;
+  }
+}
+
 function updateCamera(dt) {
   if (vehicles.driving) {
     // Cinematic chase-cam: low + close behind the car, lookahead in the
@@ -449,11 +540,13 @@ function updateCamera(dt) {
     const car = vehicles.car;
     driveYaw += angleDelta(driveYaw, car.heading + Math.PI) * damp(1.2, dt);
     const speedRatio = clamp(Math.abs(car.speed) / car.top, 0, 1);
-    const dist = 9.5 - speedRatio * 1.0;
+    // When the helicopter is up, pull back 1 m and tilt up so it stays in frame.
+    const heliLift = police.heliActive ? 1 : 0;
+    const dist = 9.5 - speedRatio * 1.0 + heliLift;
     const height = 2.7 - speedRatio * 0.4;
     cam.lookX = lerp(cam.lookX, car.x + Math.sin(car.heading) * 4, damp(6, dt));
     cam.lookZ = lerp(cam.lookZ, car.z + Math.cos(car.heading) * 4, damp(6, dt));
-    cam.lookY = lerp(cam.lookY, 1.4, damp(6, dt));
+    cam.lookY = lerp(cam.lookY, police.heliActive ? 2.8 : 1.4, damp(6, dt));
     const cx = cam.lookX + Math.sin(driveYaw) * dist;
     const cz = cam.lookZ + Math.cos(driveYaw) * dist;
     camera.position.set(
@@ -462,6 +555,7 @@ function updateCamera(dt) {
       lerp(camera.position.z, cz, damp(8, dt))
     );
     camera.lookAt(cam.lookX, cam.lookY, cam.lookZ);
+    applyShake();
     const targetFov = 60 + speedRatio * 9;
     if (Math.abs(camera.fov - targetFov) > 0.05) {
       camera.fov = lerp(camera.fov, targetFov, damp(4, dt));
@@ -485,6 +579,7 @@ function updateCamera(dt) {
     lerp(camera.position.z, cz, damp(8, dt))
   );
   camera.lookAt(cam.lookX, cam.lookY, cam.lookZ);
+  applyShake();
   // Fill light follows the camera so the player is lit from the front.
   fill.position.set(camera.position.x, camera.position.y + 4, camera.position.z);
   fill.target.position.set(player.x, 1.2, player.z);
@@ -583,8 +678,48 @@ function stageShot(name) {
     player.speed = 20;
     driveYaw = Math.PI;
     cam.pitch = 0.3;
+  } else if (name === 'chase') {
+    // The hero shot: SUNSET GT driving south on the central road at
+    // 22 m/s (79 KM/H), wanted 4, two lead police cars in open lanes
+    // ahead, a third closing from behind, the helicopter above-ahead,
+    // traffic ahead, pedestrians on the sidewalks, the ferris wheel
+    // dead ahead at (0, 198). Staged at z=130 (market district).
+    const hero = vehicles.hero;
+    hero.x = 6;
+    hero.z = 130;
+    hero.heading = 0;
+    hero.speed = 22;
+    hero.condition = 93;
+    vehicles.enter(hero);
+    char.group.visible = false;
+    player.x = hero.x;
+    player.z = hero.z;
+    player.yaw = 0;
+    player.speed = 22;
+    driveYaw = Math.PI;
+    cam.pitch = 0.3;
+    // Wanted 4 + staged police + helicopter (see police.stageChase).
+    police.stageChase();
+    // One traffic car ahead on the chase road, for density.
+    if (vehicles.traffic[0]) {
+      vehicles.traffic[0].x = 6;
+      vehicles.traffic[0].z = 178;
+      vehicles.traffic[0].heading = 0;
+      vehicles.traffic[0].speed = 10;
+    }
+    // Two pedestrians on the sidewalks beside the chase road.
+    if (npcs.list[0]) {
+      npcs.list[0].x = -8.5;
+      npcs.list[0].z = 150;
+      npcs.list[0].heading = Math.PI;
+    }
+    if (npcs.list[1]) {
+      npcs.list[1].x = 8.5;
+      npcs.list[1].z = 165;
+      npcs.list[1].heading = 0;
+    }
   }
-  if (name === 'drive') snapChaseCamera();
+  if (name === 'drive' || name === 'chase') snapChaseCamera();
   else if (name !== 'city') snapCamera();
   mode = 'playing';
   hud.title.classList.add('hidden');
@@ -608,6 +743,7 @@ function loop(now) {
     fill.position.set(camera.position.x, 100, camera.position.z);
     fill.target.position.set(0, 0, 0);
   } else if (mode === 'playing') {
+    const prevHealth = player.health;
     if (vehicles.driving) {
       // Driving: the car moves, the player rides along with it.
       vehicles.update(dt, keys, null);
@@ -622,12 +758,47 @@ function loop(now) {
       vehicles.update(dt, keys, player);
       char.group.visible = true;
     }
+    // Stage 3 systems.
+    police.update(dt);
+    npcs.update(dt, { policeCars: police.cars, playerAttacking: combat.swingTimer > 0 });
+    combat.update(dt);
+    const smokeCars = [];
+    if (vehicles.driving && vehicles.car) smokeCars.push(vehicles.car);
+    for (const c of police.cars) smokeCars.push(c);
+    for (const c of vehicles.traffic) smokeCars.push(c);
+    damage.update(dt, smokeCars);
+    neon.update(dt);
+    // If the player just took damage, pause health regen.
+    if (player.health < prevHealth) combat.noteDamage();
+    // WASTED: health 0 -> respawn at the Hospital, wanted cleared.
+    if (player.health <= 0) {
+      vehicles.reset();
+      police.reset();
+      combat.reset();
+      char.group.visible = true;
+      player.x = -32;
+      player.z = -96;
+      player.y = 0;
+      player.vy = 0;
+      player.yaw = Math.PI;
+      player.health = 100;
+      wastedAt = performance.now();
+      snapCamera();
+    }
     if (shotName !== 'city') updateCamera(dt);
     // Clock advances 1 minute per 10 s of play.
     clockMin += dt / 10;
     // Animate the sea.
     city.seaTex.offset.x += dt * 0.01;
     city.seaTex.offset.y += dt * 0.004;
+    // FPS meter (recomputed once per second).
+    fpsFrames++;
+    const nowMs = performance.now();
+    if (nowMs - fpsLastT >= 1000) {
+      fpsValue = (fpsFrames * 1000) / (nowMs - fpsLastT);
+      fpsFrames = 0;
+      fpsLastT = nowMs;
+    }
   }
   updateHUD();
   renderer.render(scene, camera);
@@ -689,6 +860,22 @@ window.__vb = {
   get camera() {
     return { x: camera.position.x, y: camera.position.y, z: camera.position.z, fov: camera.fov };
   },
+  get police() {
+    return police.getState();
+  },
+  get npcs() {
+    return npcs.getState();
+  },
+  get combat() {
+    return combat.getState();
+  },
+  get heli() {
+    const h = police.helicopter;
+    return h ? { x: h.x, y: h.y, z: h.z, active: police.heliActive } : { active: false };
+  },
+  get fps() {
+    return Math.round(fpsValue);
+  },
   buildingCount: city.buildingCount,
   colliderCount: city.colliders.length,
   start() {
@@ -701,6 +888,15 @@ window.__vb = {
     player.vy = 0;
   },
   setWanted(n) {
-    player.wanted = clamp(n, 0, 5);
+    police.setWanted(n);
+  },
+  addHeat(n, reason) {
+    return police.addHeat(n, reason);
+  },
+  attack() {
+    return combat.attack();
+  },
+  switchWeapon() {
+    return combat.switchWeapon();
   },
 };
