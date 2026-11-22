@@ -205,3 +205,57 @@ The old Stage 2–4 modules were removed from the repo in this commit (they live
 - Stage 1 DONE (~1 h of build/test, 22 Nov ~16:55–17:05 WIB).
 - Stage 2 (vehicles + chase-cam): ~1–1.5 h. Stage 3 (police + helicopter + NPCs + combat): ~2–3 h. Stage 4 (missions + audio + polish + final shots): ~2–3 h.
 - **Total remaining: ~5–7 h of build/test time.** Deadline 24 Nov 22:00 WIB — comfortable if Stages 2–4 run back-to-back under the same recording. **Do NOT stop or seal the recording until the owner approves the final result.**
+
+---
+
+## REBUILD — Stage 2 (vehicles + chase-cam) — DONE 22 Nov ~17:55 WIB (new recording)
+
+**Branch:** `full-3d-v2`. **Recording:** 01a202aa-b90a-7499-a6cc-0358480ff238 (PID 13812, running — NOT stopped or sealed).
+**Authorship rule followed:** `game/src/vehicles.js` written FRESH via muse.write in this session (no read of the old Stage 2 code — the old module lives only in git history on `full-3d` at dcdafce, never restored). `main3d.js` / `index.html` wired with targeted edits (the fresh vehicles.js carries the authorship; the edits add the chase-cam, HUD, prompt, drive shot and fill light).
+
+### Features completed
+- **Drivable cars (5 parked):** SUNSET GT sports (red hero, east side of the central road next to the player start), CORAL SEDAN (teal), HARBOUR TRUCK, PALM TAXI, BEACH VAN — each a detailed procedural model (body, cabin, glass, grille, bumpers, head/taillights, mirrors, GT spoiler + side skirts, truck bed + crates, taxi roof sign, van window band) on top of `buildCarMesh`.
+- **Enter/exit with E:** walk to a car → "E — ENTER CAR · <NAME>" prompt → E enters (chase-cam, character hidden); E exits (steps out on the car's right side, collider-aware, camera swings behind the player). Parked/traffic cars are solid AABBs to the player on foot (driven car excluded).
+- **Driving physics:** W accelerate, S brake/reverse, A/D speed-sensitive steering (less lock at speed), Space handbrake (sharper turn, speed bleed), rolling drag, building collision (centre + front/rear points, push-out + speed cut + condition damage on hard hits), car-car collision (push apart + speed loss), wheel spin + front-wheel steer. Top speeds 23–34 m/s by type; condition scales top speed.
+- **Cinematic chase-cam:** low + close behind the car (9.5 m, lower + closer with speed), lookahead, FOV kick with speed (60→69), mouse-drag orbit offset that eases back to centre, one headlight spotlight on the driven car.
+- **Traffic (4 cars):** sedan/taxi/van/sedan on 4 rectangular waypoint loops on the REAL road grid (roads at -192, -128, -64, 0, 64, 128, 192), right-lane offset, follow/avoid logic (slow/stop for a car or the player ahead), wheel spin.
+- **HUD (live data):** vehicle name + type + condition + live KM/H while driving, CAR condition row (top-left, red below 45%), "E — ENTER CAR / E — EXIT CAR" prompt, minimap vehicle dots (parked grey, traffic blue, driven car gold), speed mode line (vehicle name · type / ON FOOT).
+- **Banner fixed:** "Cars are here. The police arrive in Stage 3. Missions arrive in Stage 4." (was the stale "Missions arrive in Stage 2").
+- **Camera-side fill light:** a warm directional light repositioned every frame from the camera onto the player / driven car — the character no longer reads as a dark silhouette from behind (verified in the on-foot shot: red jacket + cap readable).
+- **Restart:** exits the car + resets every car to its spawn spot (new `vehicles.reset()`).
+- **HUD bug fixed (Stage 1):** the speed span and its outer div shared the id `hud-speed`, so updating the speed wiped the KM/H + ON FOOT labels. Renamed to `hud-speed-num` / `hud-speed-mode`.
+- **`?shot=drive` staging:** auto-enters the hero GT at 20 m/s (72 KM/H) heading south on the central road, chase-cam behind — for the drive shot. `window.__vb` now exposes `driving`, `car`, `traffic`, `parkedCount`, `camera`.
+
+### Features TESTED (headless Chromium 1255, SwiftShader, 1280×720; test script `~/workspace/makefun/gta6-01/test-rebuild-stage2.py`)
+- **31/31 checks PASS, 0 console errors, 0 page errors, 0 failed requests, 0 external requests (offline verified).**
+- Title loads, START → playing. Walk 5.00 m/s (regression). 5 parked + 4 traffic cars spawn.
+- Enter prompt appears near the car ("E — ENTER CAR · SUNSET GT"); E enters (driving=true, HUD "SUNSET GT"); car accelerates from input to 51 KM/H (HUD 51) and moves 7.5 m; E exits (driving=false, player steps out 1.8 m beside the car).
+- Traffic: 4/4 cars move along their loops.
+- All 4 staged shots reach `__shotReady` (onfoot, drive, city, beach).
+- **Screenshots (all viewed, all ≤256 KiB):**
+  - `screenshots/1-onfoot.jpg` (101,481 B) — third-person behind the character (red jacket, cap, readable), plaza fountain, HOSPITAL sign, lit-window buildings, a yellow taxi + red GT + green van, minimap vehicle dots.
+  - `screenshots/2-drive.jpg` (99,737 B) — **chase-cam while actually driving (67 KM/H, SUNSET GT, CONDITION 93% · SPORTS, E — EXIT CAR, CAR 93%)**, a traffic van ahead-right, minimap dots.
+  - `screenshots/3-city.jpg` (138,177 B) — aerial dusk city: VICE BAY vertical neon sign, HOSPITAL + BANK + SAFEHOUSE signs, plaza fountain, traffic cars.
+  - `screenshots/4-beach.jpg` (71,118 B) — beach: umbrella + teal sea + sun glow, character on the sand, lifeguard stand at the edge.
+- `shots.json` updated to the 4 shots (onfoot, drive, city, beach). The superseded `2-city.jpg`, `3-beach.jpg`, `4-plaza.jpg` were removed (they live in git history at 983174f) — the dossier caps at 4 screenshots.
+- `main.ts` writes a valid dossier.json (schema makefun/dossier/v1, cover 0, 4 images, text 95,732 bytes of the 163,840 cap).
+- **Kit check: 4 passed, 0 failed, 17 skipped, 5 checked at submission** (the 5 are repo/submission items the site checks at submit time).
+
+### Errors / obstacles found (all fixed)
+1. **Negative first-frame dt spun the car and flung the camera (the big one):** the loop computed `dt = min((now - lastNow)/1000, 0.05)` with no lower bound; the first rAF timestamp came in ~0.35 s BEFORE `performance.now()` captured at module load, so dt ≈ -0.35. That inverted the steering clamp (steer jumped to exactly 2.1 = 6×0.35), drove traffic speed to exactly -2.1, and gave the camera lerp a factor of -7.17, flinging it ~200 m away. The car spun ~1.6 turns and the camera took ~10 s to lerp back. Fixed by clamping dt to [0, 0.05] in the main loop AND in `vehicles.update()` (defense in depth). Verified with a probe: the hero now drives straight south (heading 0, x locked at 6.0), the camera sits low + close behind it (y ~2.5, ~10 m back), FOV 61→64. The same unclamped-dt bug existed in Stage 1 (harmless there — a small position glitch); the clamp fixes it for the whole game.
+2. **Traffic loops used the wrong roads:** first draft put loops on roads at ±60/±120/±180, but the real grid is -192, -128, -64, 0, 64, 128, 192 — cars would have driven through buildings. Fixed before testing by redefining all 4 loops on real roads.
+3. **Drive-shot camera was an aerial view (before the dt fix):** same root cause as (1) — the negative-dt camera fling. Resolved by the dt clamp; the re-shot 2-drive.jpg is a proper low chase-cam.
+4. **Dossier failed on `screenshots.max` (7 files):** the repo held the old `2-city.jpg`, `3-beach.jpg`, `4-plaza.jpg` alongside the 4 new shots. Fixed by removing the three superseded files; the dossier then built cleanly.
+5. **Test-threshold misread:** "car moves" failed at 7.5 m against a 10 m threshold — the car had reached 51 KM/H and was still accelerating, so 7.5 m was exactly the physics (15 m/s² over ~1 s). The game was correct; the threshold was lowered to 5 m. Re-test: 31/31.
+6. **Test script syntax error:** a backslash inside an f-string expression (`\"`) — fixed by hoisting the value to a variable first.
+
+### Features NOT yet done (next stages)
+- **Stage 3 — Police + NPCs + combat:** wanted 0–5 stars, police cars (pursuit + ram), police HELICOPTER (spotlight cone), pedestrians, punch/weapon combat, vehicle damage, neon landmarks (ferris wheel), `?shot=chase`. **Must write `game/src/police.js`, `npcs.js`, `combat.js`, `damage.js`, `neon.js`, `actors.js` fresh** (do not restore the deleted ones).
+- **Stage 4 — Missions + polish:** 4 story missions with markers + timers + rewards, money changing on rewards, dense HUD fed by live data, audio (Web Audio synth), final 4 screenshots (chase-cam + helicopter + dense HUD as the hero), README update, kit check, commit + push. **Must write `game/src/audio.js` (+ `citydetails.js` if split out) fresh.**
+- **Still a weakness vs Top 10:** no helicopter/police chase yet (Stage 3 — the #1 gap), HUD dispatch/mission still placeholder (Stage 4), the drive shot has a streetlight pole dead-centre ahead of the car and no traffic car directly in the chase lane (Stage 3 chase staging will put police + traffic + helicopter in one frame), the beach shot's sand foreground is still a wide empty expanse (re-stage candidate for Stage 4).
+- **Not in scope (simplified, honest):** procedural low-poly models only, no detailed rigs, no helicopter roadblocks, no weapon wheel beyond the shown slots, 4 missions (not 8–10), no garage upgrades, no respect ranks beyond the HUD label.
+
+### Estimated completion time (rebuild, revised)
+- Stage 2 DONE (~1 h of build/test, 22 Nov ~17:10–17:55 WIB).
+- Stage 3 (police + helicopter + NPCs + combat): ~2–3 h. Stage 4 (missions + audio + polish + final shots): ~2–3 h.
+- **Total remaining: ~4–6 h of build/test time.** Deadline 24 Nov 22:00 WIB. **Do NOT stop or seal the recording until the owner approves the final result.**

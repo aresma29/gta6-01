@@ -7,6 +7,7 @@
 import * as THREE from 'three';
 import { buildCity, districtAt, LAYOUT } from './city.js';
 import { makeCharacter } from './character.js';
+import { createVehicleSystem } from './vehicles.js';
 import { clamp, lerp, lerpAngle, pushOutOfBox } from './util.js';
 
 // ---------------------------------------------------------------- constants
@@ -54,7 +55,8 @@ const cam = {
 };
 
 const keys = Object.create(null);
-const oneShot = { jump: false };
+const oneShot = { jump: false, enter: false };
+let chaseOrbit = 0; // mouse-look offset for the chase-cam; eases back to 0
 
 // ---------------------------------------------------------------- renderer / scene
 
@@ -111,6 +113,12 @@ scene.add(sun);
 scene.add(new THREE.HemisphereLight(0x8a5a9a, 0x5a4a3a, 1.15));
 scene.add(new THREE.AmbientLight(0x604a6a, 0.8));
 
+// Camera-side fill so the character does not read as a dark silhouette
+// when backlit by the low eastern sun; repositioned every frame in loop().
+const fill = new THREE.DirectionalLight(0xffd9b0, 0.55);
+scene.add(fill);
+scene.add(fill.target);
+
 // ---------------------------------------------------------------- world
 
 const city = buildCity(1);
@@ -119,6 +127,11 @@ const colliders = city.colliders;
 
 const character = makeCharacter();
 scene.add(character.group);
+
+// Vehicles (Stage 2): five drivable cars + four traffic cars on road loops.
+const vehicles = createVehicleSystem(THREE, scene, { colliders, bounds: WORLD_BOUND });
+vehicles.spawnParked({ x: player.x, z: player.z });
+vehicles.spawnTraffic();
 
 // ---------------------------------------------------------------- HUD elements
 
@@ -136,7 +149,12 @@ const hud = {
   location: $('hud-location'),
   clock: $('hud-clock'),
   radio: $('hud-radio'),
-  speed: $('hud-speed'),
+  speed: $('hud-speed-num'),
+  speedMode: $('hud-speed-mode'),
+  car: $('hud-car'),
+  carName: $('hud-car-name'),
+  carCond: $('hud-car-cond'),
+  prompt: $('hud-prompt'),
   minimap: $('hud-minimap'),
   title: $('title-screen'),
   pause: $('pause-menu'),
@@ -153,6 +171,9 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'Space') {
     oneShot.jump = true;
     e.preventDefault();
+  }
+  if (e.code === 'KeyE') {
+    oneShot.enter = true;
   }
   if (e.code === 'KeyP' || e.code === 'Escape') {
     if (mode === 'playing') pauseGame();
@@ -181,7 +202,11 @@ window.addEventListener('pointermove', (e) => {
   const dx = e.clientX - lastMouse.x;
   const dy = e.clientY - lastMouse.y;
   lastMouse = { x: e.clientX, y: e.clientY };
-  cam.yaw -= dx * 0.005;
+  if (vehicles.driving) {
+    chaseOrbit = clamp(chaseOrbit - dx * 0.005, -1.2, 1.2);
+  } else {
+    cam.yaw -= dx * 0.005;
+  }
   cam.pitch = clamp(cam.pitch + dy * 0.003, 0, 1);
   cam.height = 2.2 + cam.pitch * 3.2;
 });
@@ -215,6 +240,12 @@ function resumeGame() {
 }
 
 function restartGame() {
+  if (vehicles.driving) {
+    vehicles.exit();
+    character.group.visible = true;
+  }
+  vehicles.reset();
+  chaseOrbit = 0;
   player.x = 0;
   player.z = 24;
   player.y = 0;
@@ -391,6 +422,34 @@ function updatePlayer(dt) {
 // ---------------------------------------------------------------- camera
 
 function updateCamera(dt) {
+  if (vehicles.driving && vehicles.current) {
+    // Cinematic chase-cam: low + close behind the car, FOV kick with speed.
+    const car = vehicles.current;
+    const speedRatio = Math.min(1, Math.abs(car.speed) / car.def.topSpeed);
+    const camDist = 9.5 - speedRatio * 1.5;
+    const camH = 2.7 - speedRatio * 0.4;
+    if (!dragging) chaseOrbit = lerp(chaseOrbit, 0, 1 - Math.exp(-2 * dt));
+    const behind = car.heading + Math.PI + chaseOrbit;
+    const desired = new THREE.Vector3(
+      car.x + Math.sin(behind) * camDist,
+      camH,
+      car.z + Math.cos(behind) * camDist
+    );
+    const s = 1 - Math.exp(-6 * dt);
+    camera.position.lerp(desired, s);
+    camera.lookAt(car.x + Math.sin(car.heading) * 6, 1.4, car.z + Math.cos(car.heading) * 6);
+    const targetFov = 60 + speedRatio * 9;
+    if (Math.abs(camera.fov - targetFov) > 0.05) {
+      camera.fov += (targetFov - camera.fov) * (1 - Math.exp(-4 * dt));
+      camera.updateProjectionMatrix();
+    }
+    return;
+  }
+  // Back on foot: restore the default field of view.
+  if (Math.abs(camera.fov - 60) > 0.05) {
+    camera.fov = 60;
+    camera.updateProjectionMatrix();
+  }
   const lookX = player.x - Math.sin(cam.yaw) * 1.2;
   const lookZ = player.z - Math.cos(cam.yaw) * 1.2;
   const lookY = 1.6;
@@ -430,7 +489,28 @@ function updateHud() {
   hud.stars.textContent = starText();
   hud.healthFill.style.width = `${clamp(health, 0, 100)}%`;
   hud.healthNum.textContent = `${Math.round(health)}`;
-  hud.speed.textContent = `${Math.round(player.speed * 3.6)}`;
+  if (vehicles.driving && vehicles.current) {
+    const car = vehicles.current;
+    hud.speed.textContent = `${Math.round(vehicles.speedKmh)}`;
+    hud.speedMode.textContent = `${car.def.name} · ${car.def.type}`;
+    hud.car.classList.remove('hidden');
+    hud.carName.textContent = car.def.name;
+    hud.carCond.textContent = `${Math.round(car.condition)}`;
+    hud.carCond.style.color = car.condition < 45 ? '#ff5a5a' : '';
+    hud.prompt.classList.remove('hidden');
+    hud.prompt.innerHTML = '<b>E</b> — EXIT CAR';
+  } else {
+    hud.speed.textContent = `${Math.round(player.speed * 3.6)}`;
+    hud.speedMode.textContent = 'ON FOOT';
+    hud.car.classList.add('hidden');
+    const near = vehicles.nearestCar(player.x, player.z, 4);
+    if (near) {
+      hud.prompt.classList.remove('hidden');
+      hud.prompt.innerHTML = `<b>E</b> — ENTER CAR · ${near.def.name}`;
+    } else {
+      hud.prompt.classList.add('hidden');
+    }
+  }
   hud.location.textContent = districtAt(player.x, player.z);
   hud.clock.textContent = clockText();
   if (wanted === 0) {
@@ -473,6 +553,13 @@ function drawMinimap() {
   ctx.beginPath();
   ctx.arc(toPx(0), toPx(0), 12, 0, Math.PI * 2);
   ctx.fill();
+  // Vehicles: parked grey, traffic blue, the driven car gold.
+  for (const car of vehicles.allCars()) {
+    ctx.fillStyle = car === vehicles.current ? '#ffd24a' : (car.isTraffic ? '#5aa8ff' : '#9a9aa8');
+    ctx.beginPath();
+    ctx.arc(toPx(car.x), toPx(car.z), car === vehicles.current ? 5 : 3.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
   // Player arrow (gold, rotated to the facing).
   const px = toPx(player.x);
   const py = toPx(player.z);
@@ -526,6 +613,21 @@ function setupShot(name) {
     cam.yaw = 0.74;
     cam.dist = 7;
     cam.height = 3;
+  } else if (name === 'drive') {
+    // Chase-cam while actually driving: the hero GT heads south on the
+    // central road at 20 m/s (72 KM/H), camera behind it.
+    const hero = vehicles.heroCar();
+    if (hero) {
+      player.x = hero.x;
+      player.z = hero.z;
+      player.yaw = hero.heading;
+      vehicles.enter(hero);
+      vehicles.setSpeed(hero, 20);
+      character.group.visible = false;
+    }
+    cam.yaw = Math.PI;
+    cam.dist = 9.5;
+    cam.height = 2.7;
   } else {
     shotName = null;
     return;
@@ -564,14 +666,66 @@ let lastNow = performance.now();
 
 function loop(now) {
   requestAnimationFrame(loop);
-  const dt = Math.min((now - lastNow) / 1000, 0.05);
+  const dt = Math.min(Math.max((now - lastNow) / 1000, 0), 0.05);
   lastNow = now;
   frameCount++;
 
   if (mode === 'playing') {
-    updatePlayer(dt);
+    // Enter / exit a car (one-shot E).
+    if (oneShot.enter) {
+      oneShot.enter = false;
+      if (vehicles.driving) {
+        const car = vehicles.current;
+        const out = vehicles.exit();
+        if (out) {
+          player.x = out.x;
+          player.z = out.z;
+          player.vx = 0;
+          player.vz = 0;
+          player.yaw = car.heading;
+        }
+        cam.yaw = car.heading + Math.PI;
+        chaseOrbit = 0;
+        character.group.visible = true;
+      } else {
+        const car = vehicles.nearestCar(player.x, player.z, 4);
+        if (car) {
+          oneShot.jump = false; // Space is the handbrake while driving
+          vehicles.enter(car);
+          character.group.visible = false;
+          showToast(`${car.def.name} — drive!`);
+        }
+      }
+    }
+    if (vehicles.driving) {
+      vehicles.update(dt, {
+        forward: !!(keys['KeyW'] || keys['ArrowUp']),
+        back: !!(keys['KeyS'] || keys['ArrowDown']),
+        left: !!(keys['KeyA'] || keys['ArrowLeft']),
+        right: !!(keys['KeyD'] || keys['ArrowRight']),
+        handbrake: !!keys['Space'],
+      }, { x: player.x, z: player.z });
+      // The player rides in the car.
+      const car = vehicles.current;
+      player.x = car.x;
+      player.z = car.z;
+      player.yaw = car.heading;
+      player.speed = Math.abs(car.speed);
+      player.vx = 0;
+      player.vz = 0;
+    } else {
+      updatePlayer(dt);
+      // Parked / traffic cars are solid to the player on foot.
+      for (const b of vehicles.solidAABBs()) {
+        const r = pushOutOfBox(player.x, player.z, PLAYER_RADIUS, b);
+        player.x = r.x;
+        player.z = r.z;
+      }
+      placeCharacter(dt);
+      // Traffic keeps moving while the player is on foot.
+      vehicles.update(dt, {}, { x: player.x, z: player.z });
+    }
     gameMinutes += dt / 10; // one game-minute per ten real seconds
-    placeCharacter(dt);
     updateCamera(dt);
     updateHud();
   } else if (mode === 'title') {
@@ -583,6 +737,12 @@ function loop(now) {
   // The sea shimmers: scroll its texture slowly.
   city.sea.offset.x += dt * 0.008;
   city.sea.offset.y += dt * 0.004;
+
+  // Camera-side fill: shine from the camera onto the player / driven car.
+  fill.position.copy(camera.position);
+  const fillTarget = vehicles.driving && vehicles.current ? vehicles.current : player;
+  fill.target.position.set(fillTarget.x, 1.5, fillTarget.z);
+  fill.target.updateMatrixWorld();
 
   renderer.render(scene, camera);
 
@@ -618,6 +778,22 @@ window.__vb = {
   },
   get district() {
     return districtAt(player.x, player.z);
+  },
+  get driving() {
+    return vehicles.driving;
+  },
+  get car() {
+    const c = vehicles.current;
+    return c ? { name: c.def.name, type: c.def.type, speed: c.speed, condition: c.condition, x: c.x, z: c.z, heading: c.heading } : null;
+  },
+  get traffic() {
+    return vehicles.traffic.map((c) => ({ x: c.x, z: c.z, speed: c.speed, name: c.def.name }));
+  },
+  get parkedCount() {
+    return vehicles.parked.length;
+  },
+  get camera() {
+    return { x: camera.position.x, y: camera.position.y, z: camera.position.z, fov: camera.fov };
   },
   get buildingCount() {
     return city.buildingCount;

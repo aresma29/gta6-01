@@ -24,6 +24,8 @@
   #hud-health .bar { height: 10px; background: rgba(0,0,0,0.6); border-radius: 5px; overflow: hidden; border: 1px solid rgba(255,255,255,0.25); }
   #hud-health-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #3aff6a, #7aff8a); }
   #hud-health-num { font-size: 12px; color: #cfe8cf; margin-top: 2px; }
+  #hud-car { font-size: 13px; margin-top: 4px; color: #e8e8f0; text-shadow: 0 2px 4px rgba(0,0,0,0.7); }
+  #hud-car .gold { font-weight: bold; }
 
   #hud-dispatch { position: absolute; top: 12px; right: 12px; width: 250px; }
   #hud-dispatch h3 { font-size: 13px; letter-spacing: 1px; color: #ffd24a; margin-bottom: 4px; }
@@ -52,6 +54,7 @@
 
   #hud-controls { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); font-size: 12px; color: rgba(255,255,255,0.85); text-shadow: 0 1px 3px rgba(0,0,0,0.9); white-space: nowrap; }
   #hud-controls b { color: #ffd24a; }
+  #hud-prompt { position: absolute; bottom: 44px; left: 50%; transform: translateX(-50%); font-size: 16px; font-weight: bold; color: #ffd24a; text-shadow: 0 2px 6px rgba(0,0,0,0.9); letter-spacing: 1px; white-space: nowrap; }
 
   #hud-toast { position: absolute; top: 22%; left: 50%; transform: translateX(-50%); font-size: 20px; font-weight: bold; color: #ffd24a; text-shadow: 0 2px 8px rgba(0,0,0,0.9); letter-spacing: 1px; }
   #hud-muted { position: absolute; top: 64px; left: 12px; font-size: 12px; color: #ff9a9a; letter-spacing: 1px; }
@@ -80,6 +83,7 @@
       <div class="bar"><div id="hud-health-fill"></div></div>
       <div id="hud-health-num">100</div>
     </div>
+    <div id="hud-car" class="hidden"><span class="gold">CAR</span> <span id="hud-car-name">—</span> · <span id="hud-car-cond">—</span>%</div>
   </div>
 
   <div id="hud-dispatch" class="panel">
@@ -89,7 +93,7 @@
 
   <div id="hud-mission" class="panel">
     <div id="hud-mission-title">VICE BAY — FREE ROAM</div>
-    <div id="hud-mission-text">Explore the city. Missions arrive in Stage 2.</div>
+    <div id="hud-mission-text">Cars are here. The police arrive in Stage 3. Missions arrive in Stage 4.</div>
   </div>
 
   <div id="hud-dialogue" class="panel">
@@ -103,12 +107,13 @@
   </div>
 
   <div id="hud-speed">
-    <div class="num"><span id="hud-speed">0</span></div>
+    <div class="num"><span id="hud-speed-num">0</span></div>
     <div class="unit">KM/H</div>
-    <div class="mode">ON FOOT</div>
+    <div class="mode" id="hud-speed-mode">ON FOOT</div>
   </div>
 
-  <div id="hud-controls"><b>WASD</b> move · <b>Shift</b> run · <b>Space</b> jump · <b>drag mouse</b> look · <b>P</b> pause · <b>M</b> mute</div>
+  <div id="hud-prompt" class="hidden"></div>
+  <div id="hud-controls"><b>WASD</b> move · <b>Shift</b> run · <b>Space</b> jump · <b>E</b> enter / exit car · <b>drag mouse</b> look · <b>P</b> pause · <b>M</b> mute</div>
   <div id="hud-toast" class="hidden"></div>
   <div id="hud-muted" class="hidden">MUTED — press M</div>
 </div>
@@ -116,12 +121,12 @@
 <div id="title-screen" class="menu">
   <h1>VICE BAY</h1>
   <h2>Free Roam</h2>
-  <p>A 3D open-world crime game in a dusk coastal city. Walk the streets of Vice Bay, learn the districts, and get ready — the cars, the police and the jobs come next.</p>
+  <p>A 3D open-world crime game in a dusk coastal city. Walk the streets of Vice Bay, drive the cars, and get ready — the police and the jobs come next.</p>
   <div class="btns">
     <button id="btn-start">START</button>
     <button id="btn-continue" class="secondary hidden">CONTINUE (LOAD SAVE)</button>
   </div>
-  <div class="hint"><b>WASD</b> move &nbsp;·&nbsp; <b>Shift</b> run &nbsp;·&nbsp; <b>Space</b> jump &nbsp;·&nbsp; <b>drag mouse</b> to look<br>Desktop Chrome · keyboard + mouse · plays offline</div>
+  <div class="hint"><b>WASD</b> move &nbsp;·&nbsp; <b>Shift</b> run &nbsp;·&nbsp; <b>Space</b> jump &nbsp;·&nbsp; <b>E</b> enter / exit car &nbsp;·&nbsp; <b>drag mouse</b> to look<br>Desktop Chrome · keyboard + mouse · plays offline</div>
 </div>
 
 <div id="pause-menu" class="menu hidden">
