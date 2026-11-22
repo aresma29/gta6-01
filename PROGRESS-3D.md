@@ -301,5 +301,53 @@ The old Stage 2–4 modules were removed from the repo in this commit (they live
 
 ### Estimated completion time (rebuild-v3, revised)
 - Stage 1 DONE (~1 h of build/test, 22 Nov ~17:50–18:10 WIB).
-- Stage 2 (vehicles + traffic): ~1–1.5 h. Stage 3 (police + helicopter + NPCs + combat): ~2–3 h. Stage 4 (missions + audio + polish + final shots): ~2–3 h.
-- **Total remaining: ~5–7 h of build/test time.** Deadline 24 Nov 22:00 WIB. **Do NOT stop or seal the recording until the owner approves the final result.**
+- Stage 2 DONE (~50 min of build/test, 22 Nov ~18:10–19:00 WIB — see Stage 2 record below).
+- Stage 3 (police + helicopter + NPCs + combat): ~2–3 h. Stage 4 (missions + audio + polish + final shots): ~2–3 h.
+- **Total remaining: ~4–6 h of build/test time.** Deadline 24 Nov 22:00 WIB. **Do NOT stop or seal the recording until the owner approves the final result.**
+
+---
+
+## Rebuild-v3 Stage 2 — Vehicles + traffic + chase-cam — DONE 22 Nov ~18:25 WIB
+
+**Branch:** `full-3d-v2`. **Recording:** 01a202e0-7049-74a8-ac8a-da7b2099c25e (PID 8575, running — NOT stopped or sealed).
+**Authorship rule followed:** `game/src/vehicles.js` written FRESH via muse.write in this session — the old Stage 2 file was deleted unread first, so no line could be copied. `main3d.js` / `index.html` wired with targeted edits (the fresh vehicles.js carries the authorship; the edits add the enter/exit, chase-cam, HUD, prompt and drive shot).
+
+### Features completed
+- **Drivable cars (5 parked):** SUNSET GT sports (red hero, central road south of the player start), CORAL SEDAN (teal), PALM TAXI (yellow, roof sign), HARBOUR TRUCK (bed + crates), BEACH VAN — each a detailed procedural model (body, glass cabin, grille, bumpers, head/taillights, mirrors, GT spoiler + side skirts, van roof) on top of `buildCarMesh`, facing +z.
+- **Enter/exit with E:** walk to a car → "E — ENTER CAR · <NAME>" prompt → E enters (chase-cam, character hidden); E exits (steps out on the car's right side, collider-aware, camera snaps behind the player). Parked cars are solid to the player on foot (circle push-out); the driven car is excluded.
+- **Driving physics:** W accelerate, S brake/reverse, A/D speed-sensitive steering (bicycle model, less lock at speed), Space handbrake (sharper turn, speed bleed), rolling + aero drag, building collision (centre + front/rear points via resolveCollisions, hard hits −2 condition + speed cut), car-car collision (circle push-apart; a fixed parked car never moves, the other car takes the full push), wheel spin (Euler order ZYX so the spin axis stays on the car's X axle) + front-wheel steer. Top speeds 23–34 m/s by type; condition scales top speed (55% at condition 0).
+- **Vehicle damage (visible):** hard crashes −2 condition, car-car hits −1.5; below 60 a dark dent patch appears on the hood; the HUD CAR row turns red below 45%.
+- **Cinematic chase-cam:** low + close behind the car (9.5 m, lower + closer with speed), lookahead in the driving direction, FOV kick with speed (60→69, verified 62.3 while driving), mouse-drag orbit offset that eases back behind the car (angular lerp via angleDelta), one headlight spotlight on the driven car (intensity 80, aimed 15 m ahead).
+- **Traffic (4 cars):** sedan/taxi/van/truck on 4 rectangular waypoint loops on the REAL road grid (-192, -128, -64, 0, 64, 128, 192), right-lane offset (3 m), follow/avoid logic (slow/stop for a car or the player ahead), wheel spin.
+- **HUD (live data):** vehicle name + type + condition + live KM/H while driving, CAR condition row (top-left), "E — ENTER CAR / E — EXIT CAR" prompt (bottom-centre), minimap vehicle dots (parked grey, traffic blue, driven car gold), speed mode line (vehicle name · type / ON FOOT).
+- **Banner fixed:** "Cars are here. The police arrive in Stage 3. Missions arrive in Stage 4." (was the stale "Cars arrive in Stage 2" line).
+- **Restart:** exits the car + resets every car to its spawn spot (new `vehicles.reset()`), character visible again.
+- **`?shot=drive` staging:** auto-enters the hero GT at 20 m/s (72 KM/H) heading south on the central road, chase-cam snapped behind — for the drive shot. `window.__vb` now exposes `driving`, `car`, `traffic`, `parkedCount`, `camera`.
+
+### Features TESTED (headless Chromium 1255, SwiftShader, 1280×720; test script `~/workspace/makefun/gta6-01/test-rebuild-stage2-v3.py`)
+- **25/25 checks PASS, 0 console errors, 0 page errors, 0 failed requests, 0 external requests (offline verified).**
+- Title loads, START → playing. Walk 5.00 m/s (regression). 5 parked + 4 traffic cars spawn.
+- Enter prompt appears near the car ("E — ENTER CAR · SUNSET GT"); E enters (driving=true, HUD "SUNSET GT"); car accelerates from input to 41 KM/H (HUD 41) and moves 5.7 m; chase-cam FOV 62.3 while driving; E exits (driving=false, player steps out 2.2 m beside the car at (3.8, 49.7)).
+- Traffic: 4/4 cars move along their loops.
+- All 4 staged shots reach `__shotReady` (onfoot, drive, city, beach).
+- **Screenshots (all viewed, all ≤256 KiB):**
+  - `screenshots/1-onfoot.jpg` (79,642 B) — character (red jacket, front view) on the central road, the red GT + teal sedan ahead, lit-window buildings, minimap vehicle dots.
+  - `screenshots/2-drive.jpg` (113,237 B) — **chase-cam while actually driving (65 KM/H, SUNSET GT, CONDITION 93% · SPORTS, E — EXIT CAR, CAR 93%)**, the road ahead ending at the beach + sea + palms + umbrella, "OCEAN DRIVE · 18:42".
+  - `screenshots/3-city.jpg` (177,739 B) — aerial dusk city: dense lit-window towers, roads, plaza fountain, minimap dots.
+  - `screenshots/4-beach.jpg` (79,059 B) — character from behind on the sand, teal sea with a golden sun glow, a palm with a long shadow, pink dusk sky.
+- `shots.json` updated to the 4 shots (onfoot, drive, city, beach). The superseded `2-city.jpg`, `3-beach.jpg`, `4-plaza.jpg` were removed (they live in git history at f870d4a) — the dossier caps at 4 screenshots.
+- `main.ts` writes a valid dossier.json (schema makefun/dossier/v1, cover 0, 4 images, text 80,954 bytes of the 163,840 cap).
+- **Kit check: 4 passed, 0 failed, 17 skipped, 5 checked at submission** (the 5 are repo/submission items the site checks at submit time).
+
+### Errors / obstacles found (all fixed)
+1. **HUD-name test flake (1 check):** the test read `hud-car-name` in the same poll that first saw `driving=true`, but the HUD only updates on the next rendered frame (~1 s later at SwiftShader's ~1 FPS), so it still read "—". The game was correct. Fixed the test to poll the HUD name (up to 10 s) instead of reading it once. Re-test: 25/25.
+2. **Beach shot v1: mostly empty sand, sea a thin band:** the camera pitch (0.3) looked down at the player and the sea sat far above the look point. Fixed by re-staging (player z 196→200, pitch 0.3→0.15, dist 7.5→10) — the sea + sun glow now fill the upper frame. Re-shot and viewed.
+3. **Drive shot v1: the car's rear read black between tall downtown towers:** re-staged from z=60 to z=130 (market district, shorter buildings) — the road ahead now ends at the beach + sea + palms and the buildings are sunlit. The car's rear is still dark (it faces away from the low eastern sun) but the red body + glowing taillights read clearly. Re-shot and viewed.
+4. **Dossier failed on `screenshots.max` (6 files):** the repo held the old `2-city.jpg` + `3-beach.jpg` alongside the 4 new shots. Fixed by removing the two superseded files; the dossier then built cleanly.
+5. **Collision design fix (before testing):** the first draft of `pushCars` moved both cars equally, so a driven car would shove a parked car. Rewrote it with a `fixed` flag (parked cars immovable, the driven car has `fixed` cleared on enter and restored on exit/reset).
+
+### Features NOT yet done (next stages)
+- **Stage 3 — Police + NPCs + combat:** wanted 0–5 stars, police cars (pursuit + ram), police HELICOPTER (spotlight cone), pedestrians, punch/weapon combat, vehicle damage, neon landmarks (ferris wheel), `?shot=chase`. **Must write `game/src/police.js`, `npcs.js`, `combat.js`, `damage.js`, `neon.js`, `actors.js` fresh** (do not restore the deleted ones).
+- **Stage 4 — Missions + polish:** 4 story missions with markers + timers + rewards, money changing on rewards, dense HUD fed by live data, audio (Web Audio synth), final 4 screenshots (chase-cam + helicopter + dense HUD as the hero), README update, kit check, commit + push. **Must write `game/src/audio.js` (+ `citydetails.js` if split out) fresh.**
+- **Still a weakness vs Top 10:** no helicopter/police chase yet (Stage 3 — the #1 gap), HUD dispatch/mission still placeholder (Stage 4), the drive shot has no traffic car or police in frame (Stage 3 chase staging will put police + traffic + helicopter in one frame), the beach shot's sand foreground is still a wide empty expanse (re-stage candidate for Stage 4).
+- **Not in scope (simplified, honest):** procedural low-poly models only, no detailed rigs, no helicopter roadblocks, no weapon wheel beyond the shown slots, 4 missions (not 8–10), no garage upgrades, no respect ranks beyond the HUD label.

@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { buildCity, districtName, HALF } from './city.js';
 import { buildCharacter, animateCharacter } from './character.js';
+import { createVehicles } from './vehicles.js';
 import { clamp, lerp, damp, angleDelta, resolveCollisions } from './util.js';
 
 const WALK_SPEED = 5;
@@ -50,6 +51,9 @@ scene.add(fill.target);
 // --- the city ---
 const city = buildCity(scene);
 
+// --- the vehicles (Stage 2) ---
+const vehicles = createVehicles(scene, city);
+
 // --- the player ---
 const char = buildCharacter();
 scene.add(char.group);
@@ -77,6 +81,9 @@ const cam = {
   lookY: 1.6,
   lookZ: 0,
 };
+// Chase-cam orbit yaw while driving: mouse drags it, and it eases back
+// behind the car (heading + PI) when left alone.
+let driveYaw = Math.PI;
 
 // ------------------------------------------------------------------ input
 const keys = {};
@@ -87,6 +94,7 @@ let lastPY = 0;
 window.addEventListener('keydown', (e) => {
   keys[e.code] = true;
   if (e.code === 'Space') jumpQueued = true;
+  if (e.code === 'KeyE') toggleCar();
   if (e.code === 'KeyP' || e.code === 'Escape') togglePause();
   if (e.code === 'KeyM') toggleMute();
   if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
@@ -104,8 +112,13 @@ window.addEventListener('mouseup', () => {
 });
 window.addEventListener('mousemove', (e) => {
   if (!dragging) return;
-  cam.yaw -= (e.clientX - lastPX) * 0.0042;
-  cam.pitch = clamp(cam.pitch + (e.clientY - lastPY) * 0.0032, -0.15, 0.85);
+  if (vehicles.driving) {
+    // Orbit the chase-cam; it eases back behind the car on its own.
+    driveYaw -= (e.clientX - lastPX) * 0.0042;
+  } else {
+    cam.yaw -= (e.clientX - lastPX) * 0.0042;
+    cam.pitch = clamp(cam.pitch + (e.clientY - lastPY) * 0.0032, -0.15, 0.85);
+  }
   lastPX = e.clientX;
   lastPY = e.clientY;
 });
@@ -131,6 +144,9 @@ const hud = {
   radio: el('hud-radio'),
   speedNum: el('hud-speed-num'),
   speedMode: el('hud-speed-mode'),
+  carName: el('hud-car-name'),
+  carCond: el('hud-car-cond'),
+  carPrompt: el('hud-car-prompt'),
   bannerTitle: el('hud-banner-title'),
   bannerSub: el('hud-banner-sub'),
   title: el('title-screen'),
@@ -196,6 +212,28 @@ function drawMinimap() {
   ctx.closePath();
   ctx.fill();
   ctx.restore();
+  // Vehicle dots: parked grey, traffic blue, driven car gold.
+  for (const car of vehicles.parked) {
+    const [vx, vz] = toMap(car.x, car.z);
+    ctx.fillStyle = '#999999';
+    ctx.beginPath();
+    ctx.arc(vx, vz, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  for (const car of vehicles.traffic) {
+    const [vx, vz] = toMap(car.x, car.z);
+    ctx.fillStyle = '#4aa8ff';
+    ctx.beginPath();
+    ctx.arc(vx, vz, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  if (vehicles.driving) {
+    const [vx, vz] = toMap(vehicles.car.x, vehicles.car.z);
+    ctx.fillStyle = '#ffd76a';
+    ctx.beginPath();
+    ctx.arc(vx, vz, 4, 0, Math.PI * 2);
+    ctx.fill();
+  }
 }
 
 function updateHUD() {
@@ -206,9 +244,29 @@ function updateHUD() {
   hud.district.textContent = districtName(player.x, player.z);
   hud.clock.textContent = fmtClock();
   hud.radio.textContent = 'VICE FM 98.5';
-  const kmh = Math.round(player.speed * 3.6);
+  const kmh = Math.round(Math.abs(player.speed) * 3.6);
   hud.speedNum.textContent = kmh;
-  hud.speedMode.textContent = 'ON FOOT';
+  if (vehicles.driving) {
+    const car = vehicles.car;
+    hud.speedMode.textContent = `${car.name} · ${car.type}`;
+    hud.carName.textContent = car.name;
+    const cond = Math.round(car.condition);
+    hud.carCond.textContent = cond + '%';
+    hud.carCond.style.color = cond < 45 ? '#ff5a5a' : '#ddd';
+    hud.carPrompt.textContent = 'E — EXIT CAR';
+    hud.carPrompt.classList.remove('hidden');
+  } else {
+    hud.speedMode.textContent = 'ON FOOT';
+    hud.carName.textContent = '—';
+    hud.carCond.textContent = '—';
+    hud.carCond.style.color = '#ddd';
+    if (vehicles.prompt) {
+      hud.carPrompt.textContent = vehicles.prompt;
+      hud.carPrompt.classList.remove('hidden');
+    } else {
+      hud.carPrompt.classList.add('hidden');
+    }
+  }
   hud.muteState.textContent = muted ? 'MUTED' : 'SOUND ON';
   drawMinimap();
 }
@@ -236,6 +294,37 @@ function togglePause() {
 }
 function toggleMute() {
   muted = !muted;
+}
+
+// E: enter the nearest parked car, or step out of the driven car.
+function toggleCar() {
+  if (mode !== 'playing') return;
+  if (vehicles.driving) {
+    const spot = vehicles.exit();
+    if (spot) {
+      player.x = spot.x;
+      player.z = spot.z;
+      player.yaw = spot.heading;
+      cam.yaw = spot.heading + Math.PI;
+      snapCamera();
+    }
+    char.group.visible = true;
+  } else {
+    let best = null;
+    let bestD = 3.5;
+    for (const car of vehicles.parked) {
+      const d = Math.hypot(car.x - player.x, car.z - player.z);
+      if (d < bestD) {
+        bestD = d;
+        best = car;
+      }
+    }
+    if (best && vehicles.enter(best)) {
+      char.group.visible = false;
+      driveYaw = best.heading + Math.PI;
+      player.yaw = best.heading;
+    }
+  }
 }
 function saveGame() {
   try {
@@ -278,6 +367,8 @@ el('btn-load').addEventListener('click', () => {
   loadGame();
 });
 el('btn-restart').addEventListener('click', () => {
+  vehicles.reset();
+  char.group.visible = true;
   player.x = 0;
   player.z = 26;
   player.y = 0;
@@ -320,6 +411,12 @@ function updatePlayer(dt) {
   const resolved = resolveCollisions(nx, nz, PLAYER_RADIUS, city.colliders);
   player.x = clamp(resolved.x, -HALF + 4, HALF - 4);
   player.z = clamp(resolved.z, -HALF + 4, HALF - 4);
+  // Parked/traffic cars are solid to the player on foot.
+  const carPush = vehicles.collidePlayer(player.x, player.z, PLAYER_RADIUS);
+  if (carPush) {
+    player.x = carPush.x;
+    player.z = carPush.z;
+  }
   // Jump + gravity. A tap queues the jump so it fires even when a frame
   // lands between the keydown and the keyup (SwiftShader runs ~1 FPS).
   if (jumpQueued && player.onGround) {
@@ -341,12 +438,39 @@ function updatePlayer(dt) {
   char.group.position.set(player.x, player.y, player.z);
   char.group.rotation.y = player.yaw;
   animateCharacter(char, player.walkPhase, player.speed, !player.onGround, dt);
-  // Clock advances 1 minute per 10 s of play.
-  clockMin += dt / 10;
 }
 
 // ------------------------------------------------------------------ camera
 function updateCamera(dt) {
+  if (vehicles.driving) {
+    // Cinematic chase-cam: low + close behind the car, lookahead in the
+    // driving direction, FOV kick with speed. The mouse orbit offset
+    // (driveYaw) eases back behind the car when left alone.
+    const car = vehicles.car;
+    driveYaw += angleDelta(driveYaw, car.heading + Math.PI) * damp(1.2, dt);
+    const speedRatio = clamp(Math.abs(car.speed) / car.top, 0, 1);
+    const dist = 9.5 - speedRatio * 1.0;
+    const height = 2.7 - speedRatio * 0.4;
+    cam.lookX = lerp(cam.lookX, car.x + Math.sin(car.heading) * 4, damp(6, dt));
+    cam.lookZ = lerp(cam.lookZ, car.z + Math.cos(car.heading) * 4, damp(6, dt));
+    cam.lookY = lerp(cam.lookY, 1.4, damp(6, dt));
+    const cx = cam.lookX + Math.sin(driveYaw) * dist;
+    const cz = cam.lookZ + Math.cos(driveYaw) * dist;
+    camera.position.set(
+      lerp(camera.position.x, cx, damp(8, dt)),
+      lerp(camera.position.y, height, damp(8, dt)),
+      lerp(camera.position.z, cz, damp(8, dt))
+    );
+    camera.lookAt(cam.lookX, cam.lookY, cam.lookZ);
+    const targetFov = 60 + speedRatio * 9;
+    if (Math.abs(camera.fov - targetFov) > 0.05) {
+      camera.fov = lerp(camera.fov, targetFov, damp(4, dt));
+      camera.updateProjectionMatrix();
+    }
+    fill.position.set(camera.position.x, camera.position.y + 4, camera.position.z);
+    fill.target.position.set(car.x, 1.2, car.z);
+    return;
+  }
   const lookX = player.x + Math.sin(player.yaw) * 3;
   const lookZ = player.z + Math.cos(player.yaw) * 3;
   cam.lookX = lerp(cam.lookX, lookX, damp(6, dt));
@@ -388,6 +512,22 @@ function snapCamera() {
   camera.lookAt(cam.lookX, cam.lookY, cam.lookZ);
 }
 
+function snapChaseCamera() {
+  const car = vehicles.car;
+  if (!car) return;
+  cam.lookX = car.x + Math.sin(car.heading) * 4;
+  cam.lookZ = car.z + Math.cos(car.heading) * 4;
+  cam.lookY = 1.4;
+  camera.position.set(
+    cam.lookX + Math.sin(driveYaw) * 9.5,
+    2.7,
+    cam.lookZ + Math.cos(driveYaw) * 9.5
+  );
+  camera.lookAt(cam.lookX, cam.lookY, cam.lookZ);
+  camera.fov = 60 + clamp(Math.abs(car.speed) / car.top, 0, 1) * 9;
+  camera.updateProjectionMatrix();
+}
+
 function stageShot(name) {
   if (name === 'onfoot') {
     player.x = 0;
@@ -406,13 +546,15 @@ function stageShot(name) {
     // Player faces the sea (south, yaw 0); the camera must be NORTH of
     // the player (cam.yaw PI) looking south. Player x=16 sits in the gap
     // between the beach buildings at x=0 and x=32 so the camera is not
-    // inside one.
+    // inside one. Player z=200 puts the sea just beyond the look point,
+    // and the low pitch (0.15) keeps the sea + sky in the upper frame
+    // instead of a wide empty sand foreground.
     player.x = 16;
-    player.z = 196;
+    player.z = 200;
     player.yaw = 0;
     cam.yaw = Math.PI;
-    cam.pitch = 0.3;
-    cam.dist = 7.5;
+    cam.pitch = 0.15;
+    cam.dist = 10;
   } else if (name === 'plaza') {
     // Player on the plaza's south edge facing north (yaw PI); camera
     // behind (south, cam.yaw 0) looking north at the player, the fountain
@@ -423,8 +565,27 @@ function stageShot(name) {
     cam.yaw = 0;
     cam.pitch = 0.3;
     cam.dist = 9;
+  } else if (name === 'drive') {
+    // Hero GT on the central road heading south at 20 m/s (72 KM/H),
+    // chase-cam snapped behind it. Staged at z=130 (market district,
+    // shorter buildings) so the car is sunlit, not in a downtown shadow.
+    const hero = vehicles.hero;
+    hero.x = 6;
+    hero.z = 130;
+    hero.heading = 0;
+    hero.speed = 20;
+    hero.condition = 93;
+    vehicles.enter(hero);
+    char.group.visible = false;
+    player.x = hero.x;
+    player.z = hero.z;
+    player.yaw = 0;
+    player.speed = 20;
+    driveYaw = Math.PI;
+    cam.pitch = 0.3;
   }
-  if (name !== 'city') snapCamera();
+  if (name === 'drive') snapChaseCamera();
+  else if (name !== 'city') snapCamera();
   mode = 'playing';
   hud.title.classList.add('hidden');
 }
@@ -447,8 +608,23 @@ function loop(now) {
     fill.position.set(camera.position.x, 100, camera.position.z);
     fill.target.position.set(0, 0, 0);
   } else if (mode === 'playing') {
-    updatePlayer(dt);
+    if (vehicles.driving) {
+      // Driving: the car moves, the player rides along with it.
+      vehicles.update(dt, keys, null);
+      const car = vehicles.car;
+      player.x = car.x;
+      player.z = car.z;
+      player.yaw = car.heading;
+      player.speed = car.speed;
+      char.group.visible = false;
+    } else {
+      updatePlayer(dt);
+      vehicles.update(dt, keys, player);
+      char.group.visible = true;
+    }
     if (shotName !== 'city') updateCamera(dt);
+    // Clock advances 1 minute per 10 s of play.
+    clockMin += dt / 10;
     // Animate the sea.
     city.seaTex.offset.x += dt * 0.01;
     city.seaTex.offset.y += dt * 0.004;
@@ -494,6 +670,24 @@ window.__vb = {
   },
   get district() {
     return districtName(player.x, player.z);
+  },
+  get driving() {
+    return vehicles.driving;
+  },
+  get car() {
+    const c = vehicles.car;
+    return c
+      ? { name: c.name, type: c.type, speed: c.speed, condition: Math.round(c.condition), x: c.x, z: c.z, heading: c.heading }
+      : null;
+  },
+  get traffic() {
+    return vehicles.traffic.map((c) => ({ x: c.x, z: c.z, speed: c.speed, heading: c.heading }));
+  },
+  get parkedCount() {
+    return vehicles.parkedCount;
+  },
+  get camera() {
+    return { x: camera.position.x, y: camera.position.y, z: camera.position.z, fov: camera.fov };
   },
   buildingCount: city.buildingCount,
   colliderCount: city.colliders.length,
