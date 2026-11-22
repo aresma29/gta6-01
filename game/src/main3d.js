@@ -4,7 +4,10 @@
 // a minimal HUD and a minimap. Written fresh for the 3D build.
 import * as THREE from '../vendor/three/three.module.min.js';
 import { buildCity, resolveCollision, ROADS } from './city.js';
+import { buildCityDetails } from './citydetails.js';
 import { makeHumanoid, poseHumanoid } from './actors.js';
+import { makeCharacter, poseCharacter } from './character.js';
+import { createVehicles } from './vehicles.js';
 import { createInput, ACT_JUMP, ACT_PAUSE, ACT_CONFIRM, clamp, lerp, lerpAngle, angleDiff } from './util.js';
 
 const params = new URLSearchParams(location.search);
@@ -19,7 +22,7 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
+renderer.toneMappingExposure = 1.18;
 
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0x3a2438, 130, 620);
@@ -54,16 +57,20 @@ sun.shadow.camera.top = 95; sun.shadow.camera.bottom = -95;
 sun.shadow.camera.near = 10; sun.shadow.camera.far = 520;
 sun.shadow.bias = -0.0006;
 scene.add(sun); scene.add(sun.target);
-const hemi = new THREE.HemisphereLight(0x8a5a8a, 0x2a2018, 0.8);
+const hemi = new THREE.HemisphereLight(0x8a5a8a, 0x2a2018, 1.15);
 scene.add(hemi);
-scene.add(new THREE.AmbientLight(0x403050, 0.5));
+scene.add(new THREE.AmbientLight(0x403050, 0.8));
 const SUN_DIR = new THREE.Vector3(-0.82, 0.42, 0.38).normalize();
 
 // --- City ---
 const city = buildCity(scene, 1337 + SEED * 0); // seed is fixed: the city is the same every run
+const cityDetails = buildCityDetails(scene, city);
+
+// --- Vehicles (drivable cars, traffic, chase-cam) ---
+const vehicles = createVehicles(scene, city);
 
 // --- Player ---
-const playerMesh = makeHumanoid({ shirt: 0xc0392b, pants: 0x2c3e50, skin: 0xc9976b, scale: 1 });
+const playerMesh = makeCharacter({ shirt: 0xc0392b, pants: 0x2c3e50, skin: 0xc9976b, scale: 1 });
 scene.add(playerMesh.group);
 const player = {
   x: city.playerStart.x, z: city.playerStart.z, y: 0, vy: 0,
@@ -89,6 +96,7 @@ const hud = $('hud'), titleEl = $('title'), pauseEl = $('pause');
 const healthfill = $('healthfill'), moneyEl = $('money'), starsEl = $('stars');
 const mnameEl = $('mname'), mobjEl = $('mobj'), mtimerEl = $('mtimer');
 const speedvalEl = $('speedval'), vehiclenameEl = $('vehiclename'), carcondEl = $('carcond');
+const carrowEl = $('carrow'), carhpEl = $('carhp');
 const locnameEl = $('locname'), clockEl = $('clock'), radioEl = $('radio');
 const bannerEl = $('banner'), arrowEl = $('arrow');
 const minimap = $('minimap'), mctx = minimap.getContext('2d');
@@ -130,6 +138,12 @@ function drawMinimap() {
   for (const b of city.buildings) {
     mctx.fillRect(px(b.x - b.w / 2), px(b.z - b.d / 2), px(b.w) - px(0), px(b.d) - px(0));
   }
+  // Vehicle blips: parked cars (grey), traffic (blue), the player's car (gold).
+  for (const v of vehicles.list) {
+    const vx = px(v.x), vz = px(v.z);
+    mctx.fillStyle = v === vehicles.playerCar ? '#ffd60a' : (v.isTraffic ? '#7ec8ff' : '#e8e8e8');
+    mctx.fillRect(vx - 2, vz - 2, 4, 4);
+  }
   // Player arrow. On the canvas +x is right and +z is down; the player faces
   // (sin h, cos h) in (x,z), so rotate the up-pointing triangle by PI - h.
   const cx = px(player.x), cz = px(player.z);
@@ -153,8 +167,14 @@ function updateHUD() {
   locnameEl.textContent = districtName(player.x, player.z);
   clockEl.textContent = '18:42';
   radioEl.textContent = 'VICE FM 98.5 — Sunset Drive';
-  vehiclenameEl.textContent = 'ON FOOT';
-  carcondEl.textContent = '';
+  vehiclenameEl.textContent = vehicles.playerCar ? vehicles.playerCar.displayName : 'ON FOOT';
+  carcondEl.textContent = vehicles.playerCar ? `CONDITION ${vehicles.playerCar.condition}% · ${vehicles.playerCar.typeLabel}` : '';
+  if (vehicles.playerCar) {
+    carrowEl.style.display = 'flex';
+    carhpEl.textContent = `CAR ${vehicles.playerCar.condition}%`;
+  } else {
+    carrowEl.style.display = 'none';
+  }
   speedvalEl.textContent = String(Math.round(player.speed * 3.6));
   dispatchUnitsEl.innerHTML = '<div class="unit"><span>VBPD — STANDBY</span><span class="dist">NO ACTIVE UNITS</span></div>';
   drawMinimap();
@@ -168,6 +188,16 @@ function updateCamera(dt, orbitMode) {
   const look = input.takeLook();
   player.camYaw -= look.dx * 0.005;
   player.camPitch = clamp(player.camPitch + look.dy * 0.003, 0.06, 0.75);
+  if (vehicles.playerCar) {
+    // Driving: cinematic chase-cam behind the car (handled by the vehicle system).
+    vehicles.driveCamera(camera, dt, look);
+    if (shake > 0.001) {
+      camera.position.x += (Math.random() - 0.5) * shake;
+      camera.position.y += (Math.random() - 0.5) * shake;
+      shake *= Math.exp(-6 * dt);
+    }
+    return;
+  }
   if (SHOT === 'city') {
     // Wide establishing shot: high above the north edge, looking south across
     // downtown toward the beach and the sea.
@@ -245,11 +275,11 @@ function updatePlayer(dt, actions) {
   player.x = res.x; player.z = res.z;
   player.x = clamp(player.x, -235, 235);
   player.z = clamp(player.z, -235, 206);
-  // Pose + mesh.
+  // Pose + mesh (walk/run animation, jump tuck, walk bob).
   player.walkPhase += player.speed * dt * 1.7;
   const amp = clamp(player.speed / 9, 0, 1) * (input.run ? 0.95 : 0.6);
-  poseHumanoid(playerMesh, player.walkPhase, amp, 0, clamp(player.speed / 9, 0, 1) * 0.14);
-  playerMesh.group.position.set(player.x, player.y, player.z);
+  poseCharacter(playerMesh, player.walkPhase, amp, 0, clamp(player.speed / 9, 0, 1) * 0.14, player.onGround ? 0 : 1);
+  playerMesh.group.position.set(player.x, player.y + playerMesh.bob, player.z);
   playerMesh.group.rotation.y = player.heading;
 }
 
@@ -263,8 +293,17 @@ function stageShot(name) {
     // so place the camera high via a wide orbit — handled in the render by a flag.
     player.x = 0; player.z = -140; player.heading = Math.PI; player.camYaw = Math.PI; player.camPitch = 0.55;
   } else if (name === 'beach') {
-    // Dusk beach: player on the sand facing the sea (south), palms + sunset.
-    player.x = 0; player.z = 190; player.heading = 0; player.camYaw = 0; player.camPitch = 0.28;
+    // Dusk beach: player on the sand facing the sea (south), with an
+    // umbrella and the lifeguard stand in frame.
+    player.x = 24; player.z = 184; player.heading = 0; player.camYaw = 0; player.camPitch = 0.28;
+  } else if (name === 'drive') {
+    // Chase-cam: the player is IN the hero car, driving east on Coral Row,
+    // with traffic ahead. The car is moving (live speed) when the shot lands.
+    const car = vehicles.hero;
+    player.x = car.x - 3; player.z = car.z;
+    vehicles.enterCar(car, player, playerMesh);
+    car.speed = 20;
+    player.camYaw = car.heading; player.camPitch = 0.22;
   }
   playerMesh.group.position.set(player.x, player.y, player.z);
   playerMesh.group.rotation.y = player.heading;
@@ -298,11 +337,13 @@ function resumeGame() {
   pauseEl.classList.add('hidden');
 }
 function restartGame() {
+  vehicles.reset(player, playerMesh);
   player.x = city.playerStart.x; player.z = city.playerStart.z; player.y = 0; player.vy = 0;
   player.heading = city.playerStart.heading; player.camYaw = player.heading;
   player.health = 100; player.money = 250; player.speed = 0;
   playerMesh.group.position.set(player.x, 0, player.z);
   playerMesh.group.rotation.y = player.heading;
+  playerMesh.group.visible = true;
   camInit = false;
   resumeGame();
   setBanner('VICE BAY', 'Back on the streets.');
@@ -320,6 +361,7 @@ function loadGame() {
     const raw = localStorage.getItem('vicebay3d-save-v1');
     if (!raw) { setBanner('NO SAVE', 'No saved game found.'); return false; }
     const d = JSON.parse(raw);
+    if (vehicles.playerCar) vehicles.exitCar(player, playerMesh);
     player.x = d.x; player.z = d.z; player.heading = d.heading || 0; player.camYaw = player.heading;
     player.health = d.health ?? 100; player.money = d.money ?? 0;
     playerMesh.group.position.set(player.x, 0, player.z);
@@ -354,7 +396,9 @@ function animate() {
   }
   if ((actions & ACT_CONFIRM) && mode === 'title') startGame();
   if (mode === 'playing') {
-    updatePlayer(dt, actions);
+    // Vehicles own the E key and the driving state; on foot the player walks.
+    const driving = vehicles.update(dt, actions, input, player, playerMesh);
+    if (!driving) updatePlayer(dt, actions);
     updateHUD();
   }
   // Sun follows the player so shadows stay crisp nearby.
@@ -362,6 +406,7 @@ function animate() {
   sun.target.position.set(player.x, 0, player.z);
   sun.target.updateMatrixWorld();
   city.update(dt);
+  cityDetails.update(dt);
   updateCamera(dt, mode === 'title');
   renderer.render(scene, camera);
   if (frames === 3) window.__gameReady = true;
@@ -379,7 +424,7 @@ window.addEventListener('resize', () => {
 window.addEventListener('error', (e) => { window.__lastError = String(e.message || e.error); });
 
 // Debug handle for automated tests (read-only state).
-window.__vb = { player, city, get mode() { return mode; }, get frames() { return frames; } };
+window.__vb = { player, city, vehicles, get mode() { return mode; }, get frames() { return frames; }, get driving() { return !!vehicles.playerCar; } };
 
 // --- Boot ---
 if (SHOT) {

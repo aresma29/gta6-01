@@ -13,29 +13,45 @@ function canvasTex(w, h, draw) {
   return t;
 }
 
-// Building facade: a window grid. The texture is mapped once per box face;
-// the roof is covered by a separate flat cap in the city builder.
+// Building facade: a window grid with varied floors, some lit windows and a
+// shopfront. The texture is mapped once per box face; the roof is covered by
+// a separate flat cap in the city builder. The base is light so the instance
+// colour tint stays readable at dusk.
 export function buildingTexture(seed) {
   const rng = makeRng(seed);
-  const lit = rng.pick(['#ffd98a', '#ffe9b0', '#9fd8ff', '#ffb08a']);
+  const litCols = ['#ffd98a', '#ffe9b0', '#9fd8ff', '#ffb08a', '#fff3c0'];
   return canvasTex(128, 256, (g, w, h) => {
-    g.fillStyle = '#8d929c'; g.fillRect(0, 0, w, h);
+    g.fillStyle = '#b9bec8'; g.fillRect(0, 0, w, h);
     const cols = 5, rows = 12, cw = w / cols, ch = h / rows;
     for (let y = 0; y < rows; y++) {
+      // Some floors are darker (a set-back / a different material band).
+      const floorDark = rng.chance(0.14);
       for (let x = 0; x < cols; x++) {
-        const on = rng.chance(0.42);
-        g.fillStyle = on ? lit : '#20242e';
-        g.fillRect(x * cw + 3, y * ch + 4, cw - 6, ch - 8);
-        if (on && rng.chance(0.5)) {
-          g.fillStyle = 'rgba(255,255,255,0.25)';
-          g.fillRect(x * cw + 3, y * ch + 4, cw - 6, 3);
+        // A few windows are wider (a double window) or skipped (a blank wall).
+        const skip = rng.chance(0.08);
+        const wide = rng.chance(0.1) && x < cols - 1;
+        const ww = wide ? cw * 2 - 6 : cw - 6;
+        if (skip) {
+          g.fillStyle = floorDark ? '#5a5e66' : '#8d929c';
+          g.fillRect(x * cw + 3, y * ch + 4, ww, ch - 8);
+          if (wide) x++;
+          continue;
         }
+        const on = rng.chance(0.55);
+        g.fillStyle = on ? rng.pick(litCols) : (floorDark ? '#2a2e38' : '#20242e');
+        g.fillRect(x * cw + 3, y * ch + 4, ww, ch - 8);
+        if (on && rng.chance(0.5)) {
+          g.fillStyle = 'rgba(255,255,255,0.28)';
+          g.fillRect(x * cw + 3, y * ch + 4, ww, 3);
+        }
+        if (wide) x++;
       }
     }
-    // Ground-floor shopfront strip.
-    g.fillStyle = '#3a3f4a'; g.fillRect(0, h - 18, w, 18);
-    g.fillStyle = 'rgba(255,217,138,0.85)';
-    for (let x = 0; x < cols; x++) g.fillRect(x * cw + 4, h - 14, cw - 8, 10);
+    // Ground-floor shopfront strip (brighter, with an awning band).
+    g.fillStyle = '#4a4f5a'; g.fillRect(0, h - 22, w, 22);
+    g.fillStyle = '#c0392b'; g.fillRect(0, h - 24, w, 4);
+    g.fillStyle = 'rgba(255,217,138,0.9)';
+    for (let x = 0; x < cols; x++) g.fillRect(x * cw + 4, h - 18, cw - 8, 12);
   });
 }
 
