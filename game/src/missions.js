@@ -1,6 +1,7 @@
-// missions.js — 4 story missions for VICE BAY 3D (Stage 4). Written fresh in
-// the rebuild recording. Sequential missions with markers, timers, rewards.
-// Money starts at $250; completing all four pays $700 more ($950 total).
+// missions.js — 10 story missions for VICE BAY 3D (Stage 4 + missions round).
+// Written fresh in the rebuild recording. Sequential missions with markers,
+// timers, rewards. Money starts at $250; completing all ten pays $3,300
+// more ($3,550 total).
 // Markers: a glowing beacon + ground ring at the current target. No network.
 
 import * as THREE from 'three';
@@ -33,6 +34,50 @@ const MISSION_DEFS = [
       { x: -128, z: -128, r: 10, label: 'CP 1' },
       { x: 128, z: 64, r: 10, label: 'CP 2' },
       { x: 0, z: 198, r: 10, label: 'CP 3' },
+    ],
+  },
+  {
+    id: 'm5', name: 'SUNSET SMUGGLE', reward: 300, time: 120,
+    desc: 'Deliver the goods to the marina in the Harbour.',
+    kind: 'reach', target: { x: 192, z: 64, r: 12, label: 'MARINA' },
+  },
+  {
+    id: 'm6', name: 'OCEAN DR ESCORT', reward: 350, time: 180,
+    desc: 'Escort the convoy along Ocean Drive, east end to west end.',
+    kind: 'legs',
+    legs: [
+      { x: 192, z: 192, r: 10, label: 'OCEAN DR EAST' },
+      { x: -192, z: 192, r: 10, label: 'OCEAN DR WEST' },
+    ],
+  },
+  {
+    id: 'm7', name: 'MIDNIGHT HEAT', reward: 400, time: 180,
+    desc: 'Get to 4 stars, then lose the cops (wanted back to 0).',
+    kind: 'heat', needStars: 4,
+  },
+  {
+    id: 'm8', name: 'FERRIS DROP', reward: 450, time: 150,
+    desc: 'Hit all 3 checkpoints around the ferris wheel, in order.',
+    kind: 'checkpoints',
+    checkpoints: [
+      { x: -64, z: 192, r: 10, label: 'CP 1' },
+      { x: 64, z: 192, r: 10, label: 'CP 2' },
+      { x: 0, z: 160, r: 10, label: 'CP 3' },
+    ],
+  },
+  {
+    id: 'm9', name: 'DOCKS RUN', reward: 500, time: 120,
+    desc: 'Reach the far docks at the north-east corner of the Harbour.',
+    kind: 'reach', target: { x: 192, z: -128, r: 12, label: 'DOCKS' },
+  },
+  {
+    id: 'm10', name: 'VICE HEIST', reward: 600, time: 240,
+    desc: 'Hit the Bank, shake the tail at the getaway, vanish at the wheel.',
+    kind: 'legs',
+    legs: [
+      { x: 128, z: -32, r: 10, label: 'BANK' },
+      { x: -128, z: 96, r: 10, label: 'GETAWAY' },
+      { x: 0, z: 198, r: 10, label: 'FERRIS WHEEL' },
     ],
   },
 ];
@@ -233,12 +278,23 @@ export function createMissions(scene, opts) {
     return `${def.name}${step} · ${tgt ? tgt.label : ''} ${d}m · ${t}s · $${def.reward}`;
   }
 
+  // Progress through the mission list, e.g. "5/10": the number of the
+  // current mission (or the next one when idle), out of the total.
+  function progress() {
+    const total = MISSION_DEFS.length;
+    if (current) return `${MISSION_DEFS.findIndex((d) => d.id === current.def.id) + 1}/${total}`;
+    const nid = nextId();
+    if (!nid) return `${total}/${total}`;
+    return `${MISSION_DEFS.findIndex((d) => d.id === nid) + 1}/${total}`;
+  }
+
   return {
     defs: MISSION_DEFS,
     get current() { return current; },
     get completed() { return [...completed]; },
     get doneCount() { return completed.size; },
     get lastResult() { return lastResult; },
+    get progress() { return progress(); },
     nextId, start, update, reset,
     get target() { return currentTarget(); },
     get status() { return status(); },

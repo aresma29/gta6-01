@@ -89,7 +89,7 @@ const combat = createCombat(scene, { parts: charParts, npcs, police, player });
 // ---- Stage 4: missions + audio -------------------------------------------
 const missions = createMissions(scene, {
   player, police,
-  // Mission rewards land in the player's pocket live ($250 -> $950).
+  // Mission rewards land in the player's pocket live ($250 -> $3,550).
   onReward: (amount) => { player.money += amount; },
 });
 const audio = createAudio();
@@ -307,7 +307,7 @@ function updateHUD(dt) {
     // NEXT line: the next action inside the CURRENT mission (only when one
     // is running — otherwise the panel just names the next mission).
     const ns = missions.nextStep;
-    mEl.innerHTML = `<b>MISSION</b><br>${missions.status}` + (ns ? `<br><span style="color:#9ad1ff">NEXT: ${ns}</span>` : '');
+    mEl.innerHTML = `<b>MISSION ${missions.progress}</b><br>${missions.status}` + (ns ? `<br><span style="color:#9ad1ff">NEXT: ${ns}</span>` : '');
   }
   // Weapon slots (active one gold + bold; SMG stays locked).
   const w = combat.weapon;

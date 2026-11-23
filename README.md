@@ -6,7 +6,7 @@
 
 Third-person 3D open-world game: a procedural coastal city at dusk,
 a walk/run/jump character, drivable cars, a police pursuit system with a
-helicopter, NPCs, combat, 4 story missions, and synthesized audio.
+helicopter, NPCs, combat, 10 story missions, and synthesized audio.
 Desktop Chrome/Chromium, keyboard + mouse, fully offline.
 
 ## How to play
@@ -49,12 +49,18 @@ visit `game/index.html`). Click START. No install, no network.
 - Combat: FISTS → BAT → PISTOL (Q cycles), pistol shots raise wanted.
 
 ### Stage 4 — missions + audio
-- 4 story missions with markers, timers, and cash rewards:
+- 10 story missions with markers, timers, and cash rewards:
   - **M1 BEACH RUN — $100**: reach the ferris wheel on Sunset Strand.
   - **M2 PACKAGE RUN — $150**: two-leg courier run across the city.
   - **M3 LOSE THE HEAT — $200**: hit 3 stars, then drop back to 0.
   - **M4 CHECKPOINT DASH — $250**: three checkpoints against the clock.
-  Completing all four takes your money from $250 to $950. The mission
+  - **M5 SUNSET SMUGGLE — $300**: deliver to the marina in the Harbour.
+  - **M6 OCEAN DR ESCORT — $350**: two legs along Ocean Drive.
+  - **M7 MIDNIGHT HEAT — $400**: hit 4 stars, then drop back to 0.
+  - **M8 FERRIS DROP — $450**: three checkpoints around the wheel.
+  - **M9 DOCKS RUN — $500**: reach the far docks in the Harbour.
+  - **M10 VICE HEIST — $600**: Bank, getaway, ferris wheel — three legs.
+  Completing all ten takes your money from $250 to $3,550. The mission
   panel shows the live objective, timer, and reward; a beacon + ground
   ring mark the target. Missions start automatically, one after another.
 - Synthesized audio (Web Audio, no files): engine hum whose pitch
