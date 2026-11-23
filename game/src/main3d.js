@@ -12,6 +12,8 @@ import { createPolice } from './police.js';
 import { createNPCs } from './npcs.js';
 import { createCombat } from './combat.js';
 import { buildLandmarks } from './landmarks.js';
+import { createMissions } from './missions.js';
+import { createAudio } from './audio.js';
 
 const SAVE_KEY = 'vicebay-save-final';
 const WALK_SPEED = 5;
@@ -84,6 +86,15 @@ let wastedT = 0; // WASTED banner countdown (game seconds)
 // ---- Stage 3: combat (needs the `player` object + character parts) --------
 const combat = createCombat(scene, { parts: charParts, npcs, police, player });
 
+// ---- Stage 4: missions + audio -------------------------------------------
+const missions = createMissions(scene, {
+  player, police,
+  // Mission rewards land in the player's pocket live ($250 -> $950).
+  onReward: (amount) => { player.money += amount; },
+});
+const audio = createAudio();
+audio.setMuted(muted);
+
 // ---- camera ---------------------------------------------------------------
 let camYaw = 0;
 let camPitch = 0.32;
@@ -144,9 +155,12 @@ addEventListener('keydown', (e) => {
     e.preventDefault();
   }
   if (e.code === 'KeyP' || e.code === 'Escape') togglePause();
-  if (e.code === 'KeyM') muted = !muted;
+  if (e.code === 'KeyM') { muted = !muted; audio.setMuted(muted); }
   if (e.code === 'KeyE' && mode === 'playing') tryEnterExitCar();
-  if (e.code === 'KeyF' && mode === 'playing' && !vehicles.driving) combat.useWeapon();
+  if (e.code === 'KeyF' && mode === 'playing' && !vehicles.driving) {
+    combat.useWeapon();
+    if (combat.weapon === 'PISTOL') audio.pistol(); else audio.punch();
+  }
   if (e.code === 'KeyQ' && mode === 'playing' && !vehicles.driving) combat.cycleWeapon();
   if (e.code === 'Enter' && mode === 'title') startGame();
 });
@@ -285,6 +299,13 @@ function updateHUD(dt) {
   $('hud-radio').textContent = muted ? 'MUTED' : 'VICE FM 98.5';
   // Live dispatch board (named units + roles + distances + AIR 1).
   $('hud-dispatch').innerHTML = `<b>VBPD DISPATCH</b><br>${police.getDispatch(player)}`;
+  // Mission panel (live objective + timer + reward; all-done banner).
+  // missions.status is a getter returning a one-line status string
+  // (e.g. "M1 BEACH RUN · Ferris wheel 25m · 90s · $100"), NOT a function.
+  const mEl = $('hud-mission');
+  if (mEl) {
+    mEl.innerHTML = `<b>MISSION</b><br>${missions.status}`;
+  }
   // Weapon slots (active one gold + bold; SMG stays locked).
   const w = combat.weapon;
   for (const [id, name] of [['hud-w-fists', 'FISTS'], ['hud-w-bat', 'BAT'], ['hud-w-pistol', 'PISTOL']]) {
@@ -399,6 +420,7 @@ $('btn-restart').addEventListener('click', () => {
   police.reset();
   npcs.reset();
   combat.reset();
+  missions.reset();
   charGroup.visible = true;
   player.x = 0;
   player.z = 24;
@@ -417,6 +439,7 @@ $('btn-restart').addEventListener('click', () => {
 });
 $('btn-mute').addEventListener('click', () => {
   muted = !muted;
+  audio.setMuted(muted);
 });
 $('btn-quit').addEventListener('click', showTitle);
 
@@ -424,9 +447,9 @@ $('btn-quit').addEventListener('click', showTitle);
 const SHOTS = {
   onfoot: { x: 0, z: -40, heading: Math.PI, yaw: 0, pitch: 0.28, dist: 7 },
   drive: { x: 0, z: 40, heading: Math.PI, yaw: 0, pitch: 0.3, dist: 9, inCar: true },
-  chase: { x: 0, z: 0, heading: 0, yaw: 0, pitch: 0.3, dist: 9, chase: true },
+  chase: { x: 0, z: 100, heading: 0, yaw: Math.PI, pitch: 0.3, dist: 9, chase: true },
   city: { x: 0, z: 0, heading: Math.PI, yaw: 0, pitch: 1.05, dist: 150 },
-  beach: { x: -40, z: 190, heading: 0, yaw: Math.PI, pitch: 0.3, dist: 7 },
+  beach: { x: 0, z: 172, heading: 0, yaw: Math.PI, pitch: 0.3, dist: 7 },
 };
 let shotFrames = 0;
 if (STAGED) {
@@ -454,12 +477,14 @@ if (STAGED) {
   if (s.chase) {
     // Hero chase: Sunset GT on the central road facing south at speed,
     // wanted 4, two lead police cars + one behind, helicopter above-ahead.
+    // Staged on the road at z=100 (not the empty plaza) so buildings line
+    // both sides and the ferris wheel at (0,198) reads dead ahead.
     const gt = vehicles.cars.find((c) => c.id === 'sunset');
-    gt.x = 0; gt.z = 0; gt.heading = 0; gt.speed = 22;
-    gt.group.position.set(0, 0, 0);
+    gt.x = 0; gt.z = 100; gt.heading = 0; gt.speed = 22;
+    gt.group.position.set(0, 0, 100);
     gt.group.rotation.y = 0;
     vehicles.enter(gt);
-    player.x = 0; player.z = 0; player.heading = 0; player.speed = 22;
+    player.x = 0; player.z = 100; player.heading = 0; player.speed = 22;
     charGroup.visible = false;
     camDist = 9.5;
     camPitch = 0.35;
@@ -505,6 +530,8 @@ window.__vb = {
   police,
   npcs,
   combat,
+  missions,
+  audio,
   get traffic() { return vehicles.traffic.map((t) => ({ id: t.id, x: t.x, z: t.z, heading: t.heading, speed: t.speed })); },
   get policeCars() { return police.list; },
   get heli() { return police.heliPos; },
@@ -513,7 +540,7 @@ window.__vb = {
   save: saveGame,
   load: loadGame,
   camera,
-  version: 'stage3-final',
+  version: 'stage4-final',
 };
 
 // ---- main loop ------------------------------------------------------------
@@ -615,8 +642,18 @@ function frame(now) {
     }
     // --- Stage 3: police pursuit, NPCs, landmarks ---
     police.update(dt, player);
+    player.wanted = police.wanted; // sync HUD/test-facing wanted from the police heat
     npcs.update(dt, player, police, vehicles);
     landmarks.update(dt);
+    // --- Stage 4: missions + audio (jingle/chime on mission events) ---
+    const mres = missions.update(dt, player, police);
+    if (mres) {
+      if (mres.type === 'complete') audio.missionComplete();
+      else if (mres.type === 'fail') audio.missionFail();
+      else if (mres.type === 'checkpoint') audio.checkpoint();
+      else if (mres.type === 'start') audio.pickup();
+    }
+    audio.update(dt, player, vehicles, police);
     // --- wasted: respawn at the Hospital ---
     if (player.health <= 0) {
       if (vehicles.driving) tryEnterExitCar();
@@ -650,7 +687,14 @@ function frame(now) {
     camPos.y = damp(camPos.y, h, 8, dt);
     camPos.z = damp(camPos.z, tz, 8, dt);
     camLook.x = damp(camLook.x, player.x + -Math.sin(camYaw) * 2, 10, dt);
-    camLook.y = damp(camLook.y, 1.6, 10, dt);
+    // When the helicopter is active, raise the look target so the camera
+    // tilts up: the helicopter + ferris wheel stay in frame while the car
+    // and the lead police cars stay in the lower half. (Previously the
+    // look target stayed at y=1.6 while the camera lifted, so the camera
+    // looked down MORE steeply and pushed the helicopter out of frame.)
+    // y=5 (not higher): the car sits ~22 deg below the look direction,
+    // the helicopter ~18 deg above — both inside a 60 deg FOV.
+    camLook.y = damp(camLook.y, police.heliActive ? 5 : 1.6, 10, dt);
     camLook.z = damp(camLook.z, player.z + -Math.cos(camYaw) * 2, 10, dt);
     // Camera shake on police rams.
     if (police.shake > 0) {

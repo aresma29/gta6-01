@@ -176,7 +176,10 @@ export function createPolice(scene, opts) {
   let heli = null; // {mesh, x, z, y, sway}
 
   function wanted() {
-    return clamp(Math.floor(heat / 20), 0, 5);
+    // ceil, not floor: setWanted(3) sets heat=60 exactly, and ANY decay
+    // below 60 must not instantly drop the level to 2 (floor(59.9/20)=2).
+    // ceil keeps the level until heat falls to the next lower multiple of 20.
+    return clamp(Math.ceil(heat / 20), 0, 5);
   }
 
   function addHeat(n, type = 'misc', cooldown = 0) {
@@ -287,9 +290,15 @@ export function createPolice(scene, opts) {
     // --- desired police count ---
     const want = w === 0 ? 0 : w <= 2 ? 2 : 3;
     while (cars.length < want) spawnCar(player.x, player.z);
-    // Stand down when wanted clears.
+    // Stand down when wanted clears; rejoin the pursuit when it rises again.
+    // (A leftover STAND DOWN car from a cleared wanted level must not sit
+    // idle — or drive AWAY — while the player is wanted again; the old code
+    // left it standDown, so the nearest-car distance GREW and the
+    // "closes in" check failed even though the other car was pursuing.)
     if (w === 0) {
       for (const c of cars) c.standDown = true;
+    } else {
+      for (const c of cars) c.standDown = false;
     }
 
     // --- police cars ---
@@ -315,16 +324,18 @@ export function createPolice(scene, opts) {
         c.z += Math.cos(c.heading) * c.speed * dt;
         if (c.despawnT > 10 || dist > 140) { removeCar(c); continue; }
       } else {
-        // Pursuit: steer at the player, slightly faster than them.
+        // Pursuit: steer at the player, slightly faster than them. Slow
+        // down when close so the car does not overshoot the player and
+        // end up FARTHER away (the old code kept full speed, overshot,
+        // and the "closes in" distance grew instead of shrinking).
         const targetHeading = Math.atan2(dx, dz);
         c.heading = dampAngle(c.heading, targetHeading, 2.2, dt);
         const playerSpeed = Math.abs(player.speed || 0);
-        const targetSpeed = clamp(playerSpeed + 5, 12, POLICE_MAX);
+        const targetSpeed = dist < 6
+          ? 4 // close in gently and stay in contact to ram
+          : clamp(playerSpeed + 5, 12, POLICE_MAX);
         c.speed = damp(c.speed, targetSpeed, 1.2, dt);
-        // Back out if stuck against a building (reverse briefly).
-        const [rx, rz] = resolveCollisions(c.x, c.z, 1.2, colliders);
-        const pushed = Math.hypot(rx - c.x, rz - c.z);
-        if (pushed > 0.5 && c.reverse <= 0) c.reverse = 0.8;
+        c.ramCooldown = Math.max(0, (c.ramCooldown || 0) - dt);
         if (c.reverse > 0) {
           c.reverse -= dt;
           c.x -= Math.sin(c.heading) * 6 * dt;
@@ -333,18 +344,27 @@ export function createPolice(scene, opts) {
           c.x += Math.sin(c.heading) * c.speed * dt;
           c.z += Math.cos(c.heading) * c.speed * dt;
         }
+        // Resolve collisions at the NEW position (after moving). The old
+        // code resolved at the pre-move position and then overwrote the
+        // moved position with it, so the car never moved at all.
+        const [rx, rz] = resolveCollisions(c.x, c.z, 1.2, colliders);
+        const pushed = Math.hypot(rx - c.x, rz - c.z);
+        if (pushed > 0.5 && c.reverse <= 0) c.reverse = 0.8;
         c.x = clamp(rx, -WORLD + 4, WORLD - 4);
         c.z = clamp(rz, -WORLD + 4, WORLD - 4);
         // Ram: on a car, bleed its speed + damage it; on foot, hurt + knockback.
-        if (dist < 3.2) {
+        // No speed gate on the player's car: a stationary car must still take
+        // damage when a police car hits it (the old `speed > 1` gate meant a
+        // parked/stationary player car was never damaged, so the ram check
+        // always read 0.00). Ram at most once per 0.5 s per unit.
+        if (dist < 3.2 && c.ramCooldown <= 0) {
           if (vehicles && vehicles.driving) {
             const car = vehicles.driving;
-            if (Math.abs(car.speed) > 1) {
-              car.speed *= 0.6;
-              car.damage = clamp(car.damage + 0.01, 0, 1);
-              car.damageCooldown = 0.5;
-              shake = 0.5;
-            }
+            car.speed *= 0.6;
+            car.damage = clamp(car.damage + 0.05, 0, 1);
+            car.damageCooldown = 0.5;
+            c.ramCooldown = 0.5;
+            shake = 0.5;
           } else if (dist < 2.5) {
             player.health = Math.max(0, player.health - 12);
             const nx = dx / (dist || 1);
@@ -352,6 +372,7 @@ export function createPolice(scene, opts) {
             player.x -= nx * 3;
             player.z -= nz * 3;
             c.reverse = 0.8;
+            c.ramCooldown = 0.5;
             shake = 0.4;
           }
         }
@@ -409,12 +430,14 @@ export function createPolice(scene, opts) {
   function stageChase(player) {
     setWanted(4);
     player.wanted = 4;
-    // Clear any existing units, then place three at fixed offsets.
+    // Clear any existing units, then place three at fixed offsets RELATIVE
+    // to the player (so the staged chase puts them in frame): two lead
+    // cars 25–30 m ahead in open lanes, one closing from 30 m behind.
     while (cars.length) removeCar(cars[0]);
     const spots = [
-      { x: 4, z: 60, heading: 0 },
-      { x: -4, z: 90, heading: 0 },
-      { x: 0, z: -40, heading: 0 },
+      { x: player.x + 4, z: player.z + 25, heading: 0 },
+      { x: player.x - 4, z: player.z + 30, heading: 0 },
+      { x: player.x, z: player.z - 30, heading: 0 },
     ];
     for (const s of spots) {
       const parts = buildPoliceCarMesh();
