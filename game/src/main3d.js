@@ -7,6 +7,7 @@ import * as THREE from 'three';
 import { clamp, lerp, damp, dampAngle, resolveCollisions } from './util.js';
 import { buildCity, districtAt, WORLD } from './city.js';
 import { buildCharacter } from './character.js';
+import { createVehicles } from './vehicles.js';
 
 const SAVE_KEY = 'vicebay-save-final';
 const WALK_SPEED = 5;
@@ -55,6 +56,7 @@ scene.add(fill.target);
 
 // ---- city + character -----------------------------------------------------
 const city = buildCity(scene);
+const vehicles = createVehicles(scene, { colliders: city.colliders });
 const { group: charGroup, pose } = buildCharacter();
 scene.add(charGroup);
 
@@ -89,6 +91,36 @@ function snapCamera() {
   camera.lookAt(camLook);
 }
 
+// ---- vehicles (Stage 2) ----------------------------------------------------
+function tryEnterExitCar() {
+  if (vehicles.driving) {
+    const spot = vehicles.exit();
+    if (spot) {
+      player.x = spot.x;
+      player.z = spot.z;
+      player.heading = spot.heading;
+      player.speed = 0;
+      player.y = 0;
+      player.vy = 0;
+      player.grounded = true;
+      charGroup.visible = true;
+      camDist = 7;
+      camPitch = 0.32;
+      snapCamera();
+    }
+    return;
+  }
+  const car = vehicles.nearest(player.x, player.z);
+  if (!car) return;
+  vehicles.enter(car);
+  if (!car.owned) player.wanted = Math.max(1, player.wanted);
+  player.x = car.x;
+  player.z = car.z;
+  player.heading = car.heading;
+  player.speed = car.speed;
+  charGroup.visible = false;
+}
+
 // ---- input ----------------------------------------------------------------
 const keys = {};
 addEventListener('keydown', (e) => {
@@ -100,6 +132,7 @@ addEventListener('keydown', (e) => {
   }
   if (e.code === 'KeyP' || e.code === 'Escape') togglePause();
   if (e.code === 'KeyM') muted = !muted;
+  if (e.code === 'KeyE' && mode === 'playing') tryEnterExitCar();
   if (e.code === 'Enter' && mode === 'title') startGame();
 });
 addEventListener('keyup', (e) => {
@@ -211,7 +244,7 @@ function updateHUD(dt) {
   $('hud-health-fill').style.width = `${player.health}%`;
   $('hud-health-num').textContent = `${Math.round(player.health)}`;
   $('hud-speed-num').textContent = `${Math.round(player.speed * 3.6)}`;
-  $('hud-speed-mode').textContent = player.speed > 0.5 ? 'ON FOOT' : 'ON FOOT';
+  $('hud-speed-mode').textContent = vehicles.driving ? 'IN CAR' : 'ON FOOT';
   $('hud-district').textContent = districtAt(player.x, player.z);
   $('hud-clock').textContent = fmtClock();
   $('hud-radio').textContent = muted ? 'MUTED' : 'VICE FM 98.5';
@@ -246,7 +279,7 @@ function togglePause() {
 }
 
 function saveGame() {
-  const data = { x: player.x, z: player.z, money: player.money, health: player.health, clockMin };
+  const data = { x: player.x, z: player.z, money: player.money, health: player.health, clockMin, car: vehicles.serialize() };
   localStorage.setItem(SAVE_KEY, JSON.stringify(data));
   return true;
 }
@@ -264,6 +297,21 @@ function loadGame() {
     player.y = 0;
     player.vy = 0;
     player.grounded = true;
+    if (d.car) {
+      vehicles.restore(d.car);
+      if (vehicles.driving) {
+        const car = vehicles.driving;
+        player.x = car.x;
+        player.z = car.z;
+        player.heading = car.heading;
+        player.speed = car.speed;
+        charGroup.visible = false;
+        camDist = 9.5;
+        camPitch = 0.35;
+      } else {
+        charGroup.visible = true;
+      }
+    }
     snapCamera();
     return true;
   } catch {
@@ -280,6 +328,8 @@ $('btn-resume').addEventListener('click', togglePause);
 $('btn-save').addEventListener('click', saveGame);
 $('btn-load').addEventListener('click', loadGame);
 $('btn-restart').addEventListener('click', () => {
+  vehicles.reset();
+  charGroup.visible = true;
   player.x = 0;
   player.z = 24;
   player.y = 0;
@@ -291,6 +341,7 @@ $('btn-restart').addEventListener('click', () => {
   clockMin = 18 * 60 + 42;
   camYaw = 0;
   camPitch = 0.32;
+  camDist = 7;
   snapCamera();
   togglePause();
 });
@@ -302,9 +353,9 @@ $('btn-quit').addEventListener('click', showTitle);
 // ---- shot staging ---------------------------------------------------------
 const SHOTS = {
   onfoot: { x: 0, z: -40, heading: Math.PI, yaw: 0, pitch: 0.28, dist: 7 },
+  drive: { x: 0, z: 40, heading: Math.PI, yaw: 0, pitch: 0.3, dist: 9, inCar: true },
   city: { x: 0, z: 0, heading: Math.PI, yaw: 0, pitch: 1.05, dist: 150 },
   beach: { x: -40, z: 190, heading: 0, yaw: Math.PI, pitch: 0.3, dist: 7 },
-  plaza: { x: 0, z: 18, heading: Math.PI, yaw: 0, pitch: 0.3, dist: 7 },
 };
 let shotFrames = 0;
 if (STAGED) {
@@ -319,6 +370,16 @@ if (STAGED) {
   $('title-screen').style.display = 'none';
   $('hud').style.display = 'block';
   snapCamera();
+  if (s.inCar) {
+    const car = vehicles.nearest(player.x, player.z, 6);
+    if (car) {
+      vehicles.enter(car);
+      player.x = car.x;
+      player.z = car.z;
+      player.heading = car.heading;
+      charGroup.visible = false;
+    }
+  }
 } else {
   showTitle();
 }
@@ -336,6 +397,7 @@ window.__vb = {
   colliderCount: city.colliders.length,
   start: startGame,
   teleport(x, z) {
+    if (vehicles.driving) tryEnterExitCar();
     player.x = x;
     player.z = z;
     snapCamera();
@@ -343,10 +405,17 @@ window.__vb = {
   setWanted(n) {
     player.wanted = clamp(n, 0, 5);
   },
+  get inCar() { return !!vehicles.driving; },
+  get car() {
+    const c = vehicles.driving;
+    return c ? { id: c.id, x: c.x, z: c.z, heading: c.heading, speed: c.speed, damage: c.damage, owned: c.owned } : null;
+  },
+  vehicles,
+  get traffic() { return vehicles.traffic.map((t) => ({ id: t.id, x: t.x, z: t.z, heading: t.heading, speed: t.speed })); },
   save: saveGame,
   load: loadGame,
   camera,
-  version: 'stage1-final',
+  version: 'stage2-final',
 };
 
 // ---- main loop ------------------------------------------------------------
@@ -367,6 +436,22 @@ function frame(now) {
     camera.position.set(Math.sin(titleYaw) * 130, 65, Math.cos(titleYaw) * 130);
     camera.lookAt(0, 10, 0);
   } else if (mode === 'playing') {
+    if (vehicles.driving) {
+      // --- driving (Stage 2) ---
+      if (STAGED && SHOT === 'drive') keys.KeyW = true; // auto-drive for the shot
+      vehicles.update(dt, keys);
+      const car = vehicles.driving;
+      player.x = car.x;
+      player.z = car.z;
+      player.heading = car.heading;
+      player.speed = car.speed;
+      charGroup.visible = false;
+      // Chase camera: swing behind the car.
+      camYaw = dampAngle(camYaw, car.heading + Math.PI, 3, dt);
+      camDist = damp(camDist, 9.5, 3, dt);
+      camPitch = damp(camPitch, 0.35, 3, dt);
+      vehicles.updateLighting(clockMin);
+    } else {
     // --- movement (camera-relative) ---
     const fwdX = -Math.sin(camYaw);
     const fwdZ = -Math.cos(camYaw);
@@ -421,6 +506,10 @@ function frame(now) {
     charGroup.rotation.y = player.heading;
     const speedNorm = clamp(player.speed / RUN_SPEED, 0, 1);
     pose(player.phase, speedNorm, !player.grounded, player.idleTime);
+      charGroup.visible = true;
+      vehicles.update(dt, keys); // traffic keeps moving while on foot
+      vehicles.updateLighting(clockMin);
+    }
     // --- camera (smooth follow) ---
     const dh = Math.cos(camPitch) * camDist;
     const h = Math.sin(camPitch) * camDist + 1.6;
