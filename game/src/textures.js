@@ -241,11 +241,11 @@ export function skyTexture() {
   const c = canvas(16, 512);
   const g = c.getContext('2d');
   const grad = g.createLinearGradient(0, 0, 0, 512);
-  grad.addColorStop(0, '#1a1440');
-  grad.addColorStop(0.35, '#4a2a6a');
-  grad.addColorStop(0.6, '#a03a6a');
-  grad.addColorStop(0.8, '#ff7a3d');
-  grad.addColorStop(1, '#ffd98a');
+  grad.addColorStop(0, '#160f38');
+  grad.addColorStop(0.35, '#4a2566');
+  grad.addColorStop(0.6, '#b03a5a');
+  grad.addColorStop(0.8, '#ff6a25');
+  grad.addColorStop(1, '#ffcf6a');
   g.fillStyle = grad;
   g.fillRect(0, 0, 16, 512);
   return tex(c, { srgb: true });

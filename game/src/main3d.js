@@ -38,11 +38,11 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 document.getElementById('game').appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0x6a4a6a, 120, 620);
+scene.fog = new THREE.Fog(0x7a4a58, 120, 620);
 const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 1500);
 
 // ---- dusk lighting --------------------------------------------------------
-const sun = new THREE.DirectionalLight(0xffb36a, 2.4);
+const sun = new THREE.DirectionalLight(0xff9e3d, 2.6);
 sun.position.set(180, 55, 320); // low over the sea (south-east), long shadows
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
@@ -53,8 +53,8 @@ sun.shadow.camera.bottom = -260;
 sun.shadow.camera.far = 900;
 sun.shadow.bias = -0.0004;
 scene.add(sun);
-scene.add(new THREE.HemisphereLight(0x8a6ab0, 0x2a2a3a, 1.15));
-scene.add(new THREE.AmbientLight(0x604a6a, 0.8));
+scene.add(new THREE.HemisphereLight(0x9a6ab8, 0x3a2a30, 1.25));
+scene.add(new THREE.AmbientLight(0x6a4a58, 0.85));
 // Camera-side fill so the character is not a dark silhouette from behind.
 const fill = new THREE.DirectionalLight(0xffe0b0, 0.85);
 scene.add(fill);
