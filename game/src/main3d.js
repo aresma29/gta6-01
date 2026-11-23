@@ -304,7 +304,10 @@ function updateHUD(dt) {
   // (e.g. "M1 BEACH RUN · Ferris wheel 25m · 90s · $100"), NOT a function.
   const mEl = $('hud-mission');
   if (mEl) {
-    mEl.innerHTML = `<b>MISSION</b><br>${missions.status}`;
+    // NEXT line: the next action inside the CURRENT mission (only when one
+    // is running — otherwise the panel just names the next mission).
+    const ns = missions.nextStep;
+    mEl.innerHTML = `<b>MISSION</b><br>${missions.status}` + (ns ? `<br><span style="color:#9ad1ff">NEXT: ${ns}</span>` : '');
   }
   // Weapon slots (active one gold + bold; SMG stays locked).
   const w = combat.weapon;
@@ -328,12 +331,14 @@ function updateHUD(dt) {
       carRow.style.display = 'none';
     }
   }
-  // Rico's warning when the heat is on.
+  // Rico's warning when the heat is on (text span only — the portrait stays).
   const dlg = $('hud-dialogue');
   if (dlg) {
-    dlg.innerHTML = player.wanted >= 3
+    const s = player.wanted >= 3
       ? '<b>Rico — Fixer:</b> The cops are all over you, Jax. Lose them — fast.'
       : '<b>Rico — Fixer:</b> Vice Bay is yours, Jax. Walk it, learn it. The work comes later.';
+    const txt = dlg.querySelector('.dlg-text');
+    if (txt) txt.innerHTML = s; else dlg.innerHTML = s;
   }
   drawMinimap();
 }
@@ -476,7 +481,7 @@ if (STAGED) {
   }
   if (s.chase) {
     // Hero chase: Sunset GT on the central road facing south at speed,
-    // wanted 4, two lead police cars + one behind, helicopter above-ahead.
+    // wanted 5, two lead police cars + one behind, helicopter above-ahead.
     // Staged on the road at z=100 (not the empty plaza) so buildings line
     // both sides and the ferris wheel at (0,198) reads dead ahead.
     const gt = vehicles.cars.find((c) => c.id === 'sunset');
@@ -489,6 +494,10 @@ if (STAGED) {
     camDist = 9.5;
     camPitch = 0.35;
     police.stageChase(player);
+    // Live mission in the hero frame so the mission panel shows the
+    // objective + NEXT step (staging only — the target beacon sits at the
+    // ferris wheel dead ahead).
+    missions.start('m1');
     snapCamera();
   }
 } else {

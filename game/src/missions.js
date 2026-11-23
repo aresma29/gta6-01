@@ -189,6 +189,22 @@ export function createMissions(scene, opts) {
     return null; // heat: no fixed target
   }
 
+  // Next action inside the CURRENT mission (for the HUD NEXT line).
+  // Empty when no mission is running (the panel then names the next mission).
+  function nextStep() {
+    if (!current) return '';
+    const def = current.def;
+    if (def.kind === 'reach') return `Drive to ${def.target.label}`;
+    if (def.kind === 'legs') return def.legs[current.legIdx].label;
+    if (def.kind === 'checkpoints') return def.checkpoints[current.cpIdx].label;
+    if (def.kind === 'heat') {
+      return current.phase === 'go'
+        ? `Raise heat to ${def.needStars} stars`
+        : 'Lose the cops';
+    }
+    return '';
+  }
+
   function status() {
     if (lastResultT > 0 && lastResult) {
       return lastResult.kind === 'complete'
@@ -226,5 +242,6 @@ export function createMissions(scene, opts) {
     nextId, start, update, reset,
     get target() { return currentTarget(); },
     get status() { return status(); },
+    get nextStep() { return nextStep(); },
   };
 }

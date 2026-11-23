@@ -12,6 +12,16 @@ const ROADS = [-192, -128, -64, 0, 64, 128, 192];
 const POLICE_MAX = 32;
 const UNIT_NAMES = ['UNIT 12', 'UNIT 07', 'UNIT 23'];
 
+// Reserve units for the dispatch board (HUD-only display rows). During a
+// live chase these read as EN ROUTE / STAGING units closing in — they are
+// never spawned as cars and never change gameplay.
+const RESERVE_UNITS = [
+  { unit: 'UNIT 31', role: 'RAMMING', status: 'EN ROUTE', base: 42 },
+  { unit: 'K9-3', role: 'PURSUIT', status: 'EN ROUTE', base: 15 },
+  { unit: 'SWAT-2', role: 'ROADBLOCK', status: 'STAGING', base: 80 },
+  { unit: 'UNIT 44', role: 'FLANKING', status: 'EN ROUTE', base: 63 },
+];
+
 // ---- police car mesh (VBPD black-and-white, light bar, glow) -------------
 function buildPoliceCarMesh() {
   const g = new THREE.Group();
@@ -425,18 +435,20 @@ export function createPolice(scene, opts) {
     }
   }
 
-  // Deterministic hero-chase staging: wanted 4, two lead police cars in open
+  // Deterministic hero-chase staging: wanted 5, two lead police cars in open
   // lanes ahead, a third closing from behind, helicopter above-ahead.
+  // The lead cars sit wide (±9 m) and near-level in depth so both read as
+  // separate cars in the chase-cam frame (not single file).
   function stageChase(player) {
-    setWanted(4);
-    player.wanted = 4;
+    setWanted(5);
+    player.wanted = 5;
     // Clear any existing units, then place three at fixed offsets RELATIVE
     // to the player (so the staged chase puts them in frame): two lead
-    // cars 25–30 m ahead in open lanes, one closing from 30 m behind.
+    // cars 25–28 m ahead in open lanes, one closing from 30 m behind.
     while (cars.length) removeCar(cars[0]);
     const spots = [
-      { x: player.x + 4, z: player.z + 25, heading: 0 },
-      { x: player.x - 4, z: player.z + 30, heading: 0 },
+      { x: player.x + 9, z: player.z + 25, heading: 0 },
+      { x: player.x - 9, z: player.z + 28, heading: 0 },
       { x: player.x, z: player.z - 30, heading: 0 },
     ];
     for (const s of spots) {
@@ -467,6 +479,13 @@ export function createPolice(scene, opts) {
     if (heli) {
       const d = Math.round(Math.hypot(heli.x - player.x, heli.z - player.z));
       lines.push(`AIR 1 · HELICOPTER · ${d} m`);
+    }
+    if (wanted() > 0) {
+      // Reserve units closing in (HUD-only — distances count down with time).
+      for (const r of RESERVE_UNITS) {
+        const d = Math.max(12, r.base - Math.floor(time * 1.5));
+        lines.push(`${r.unit} · ${r.role} · ${r.status} · ${d} m`);
+      }
     }
     return lines.join('<br>');
   }
