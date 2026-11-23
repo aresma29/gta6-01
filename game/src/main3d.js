@@ -1,0 +1,462 @@
+// main3d.js — VICE BAY 3D, Stage 1 (final rebuild).
+// Third-person 3D: procedural character, coastal city, chase camera, HUD,
+// minimap, save/load, staged screenshots. Desktop Chrome/Chromium, offline.
+// dt is clamped to [0, 0.05] (a negative first-frame dt once spun the camera).
+
+import * as THREE from 'three';
+import { clamp, lerp, damp, dampAngle, resolveCollisions } from './util.js';
+import { buildCity, districtAt, WORLD } from './city.js';
+import { buildCharacter } from './character.js';
+
+const SAVE_KEY = 'vicebay-save-final';
+const WALK_SPEED = 5;
+const RUN_SPEED = 8;
+const JUMP_VEL = 7.5;
+const GRAVITY = 22;
+const PLAYER_RADIUS = 0.5;
+
+const params = new URLSearchParams(location.search);
+const SHOT = params.get('shot');
+const STAGED = !!SHOT;
+
+// ---- renderer / scene ----------------------------------------------------
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.18;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.getElementById('game').appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x6a4a6a, 120, 620);
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 1500);
+
+// ---- dusk lighting --------------------------------------------------------
+const sun = new THREE.DirectionalLight(0xffb36a, 2.4);
+sun.position.set(180, 55, 320); // low over the sea (south-east), long shadows
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -260;
+sun.shadow.camera.right = 260;
+sun.shadow.camera.top = 260;
+sun.shadow.camera.bottom = -260;
+sun.shadow.camera.far = 900;
+sun.shadow.bias = -0.0004;
+scene.add(sun);
+scene.add(new THREE.HemisphereLight(0x8a6ab0, 0x2a2a3a, 1.15));
+scene.add(new THREE.AmbientLight(0x604a6a, 0.8));
+// Camera-side fill so the character is not a dark silhouette from behind.
+const fill = new THREE.DirectionalLight(0xffe0b0, 0.85);
+scene.add(fill);
+scene.add(fill.target);
+
+// ---- city + character -----------------------------------------------------
+const city = buildCity(scene);
+const { group: charGroup, pose } = buildCharacter();
+scene.add(charGroup);
+
+// ---- player state ---------------------------------------------------------
+const player = {
+  x: 0, z: 24, y: 0, vy: 0, heading: Math.PI, speed: 0,
+  grounded: true, phase: 0, idleTime: 0, money: 250, health: 100, wanted: 0,
+};
+let clockMin = 18 * 60 + 42; // 18:42
+let mode = 'title'; // 'title' | 'playing' | 'paused'
+let muted = false;
+let jumpQueued = false;
+let titleYaw = 0;
+
+// ---- camera ---------------------------------------------------------------
+let camYaw = 0;
+let camPitch = 0.32;
+let camDist = 7;
+let camPos = new THREE.Vector3(0, 4, 31);
+let camLook = new THREE.Vector3(0, 1.6, 24);
+
+function snapCamera() {
+  const dh = Math.cos(camPitch) * camDist;
+  const h = Math.sin(camPitch) * camDist + 1.6;
+  camPos.set(
+    player.x + Math.sin(camYaw) * dh,
+    h,
+    player.z + Math.cos(camYaw) * dh
+  );
+  camLook.set(player.x, 1.6, player.z);
+  camera.position.copy(camPos);
+  camera.lookAt(camLook);
+}
+
+// ---- input ----------------------------------------------------------------
+const keys = {};
+addEventListener('keydown', (e) => {
+  if (e.repeat) return;
+  keys[e.code] = true;
+  if (e.code === 'Space') {
+    jumpQueued = true;
+    e.preventDefault();
+  }
+  if (e.code === 'KeyP' || e.code === 'Escape') togglePause();
+  if (e.code === 'KeyM') muted = !muted;
+  if (e.code === 'Enter' && mode === 'title') startGame();
+});
+addEventListener('keyup', (e) => {
+  keys[e.code] = false;
+});
+
+let dragging = false;
+let lastMX = 0;
+let lastMY = 0;
+renderer.domElement.addEventListener('mousedown', (e) => {
+  dragging = true;
+  lastMX = e.clientX;
+  lastMY = e.clientY;
+});
+addEventListener('mouseup', () => {
+  dragging = false;
+});
+addEventListener('mousemove', (e) => {
+  if (!dragging || mode !== 'playing') return;
+  camYaw -= (e.clientX - lastMX) * 0.005;
+  camPitch = clamp(camPitch + (e.clientY - lastMY) * 0.004, -0.05, 1.15);
+  lastMX = e.clientX;
+  lastMY = e.clientY;
+});
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// ---- HUD ------------------------------------------------------------------
+const $ = (id) => document.getElementById(id);
+const minimap = $('minimap');
+const mm = minimap.getContext('2d');
+
+function fmtClock() {
+  const h = Math.floor(clockMin / 60) % 24;
+  const m = Math.floor(clockMin % 60);
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+function drawMinimap() {
+  const S = minimap.width;
+  const scale = S / 480;
+  const px = (v) => (v + 240) * scale;
+  mm.clearRect(0, 0, S, S);
+  // Circular mask.
+  mm.save();
+  mm.beginPath();
+  mm.arc(S / 2, S / 2, S / 2, 0, Math.PI * 2);
+  mm.clip();
+  mm.fillStyle = '#1a1a24';
+  mm.fillRect(0, 0, S, S);
+  // Sea (south) + beach.
+  mm.fillStyle = '#1f7a8a';
+  mm.fillRect(0, px(240), S, S - px(240));
+  mm.fillStyle = '#d9c08a';
+  mm.fillRect(0, px(160), S, px(240) - px(160));
+  // Roads.
+  mm.strokeStyle = '#3a3a44';
+  mm.lineWidth = 3;
+  for (const r of city.roads) {
+    mm.beginPath();
+    mm.moveTo(px(r), 0);
+    mm.lineTo(px(r), S);
+    mm.stroke();
+    mm.beginPath();
+    mm.moveTo(0, px(r));
+    mm.lineTo(S, px(r));
+    mm.stroke();
+  }
+  // Buildings.
+  mm.fillStyle = '#8a8694';
+  for (const b of city.buildings) {
+    mm.fillRect(px(b.x - b.w / 2), px(b.z - b.d / 2), Math.max(1.5, b.w * scale), Math.max(1.5, b.d * scale));
+  }
+  // Plaza.
+  mm.fillStyle = '#4a8a9a';
+  mm.beginPath();
+  mm.arc(px(0), px(0), 6, 0, Math.PI * 2);
+  mm.fill();
+  // Player arrow (gold, rotated to heading).
+  mm.save();
+  mm.translate(px(player.x), px(player.z));
+  mm.rotate(-player.heading + Math.PI);
+  mm.fillStyle = '#ffd24a';
+  mm.beginPath();
+  mm.moveTo(0, -7);
+  mm.lineTo(5, 5);
+  mm.lineTo(-5, 5);
+  mm.closePath();
+  mm.fill();
+  mm.restore();
+  mm.restore();
+  // N tick.
+  mm.fillStyle = '#ffffff';
+  mm.font = 'bold 11px Arial';
+  mm.textAlign = 'center';
+  mm.fillText('N', S / 2, 12);
+}
+
+let hudTick = 0;
+function updateHUD(dt) {
+  hudTick += dt;
+  if (hudTick < 0.12) return;
+  hudTick = 0;
+  $('hud-money').textContent = `$${player.money}`;
+  $('hud-stars').textContent = '★'.repeat(player.wanted) + '☆'.repeat(5 - player.wanted);
+  $('hud-health-fill').style.width = `${player.health}%`;
+  $('hud-health-num').textContent = `${Math.round(player.health)}`;
+  $('hud-speed-num').textContent = `${Math.round(player.speed * 3.6)}`;
+  $('hud-speed-mode').textContent = player.speed > 0.5 ? 'ON FOOT' : 'ON FOOT';
+  $('hud-district').textContent = districtAt(player.x, player.z);
+  $('hud-clock').textContent = fmtClock();
+  $('hud-radio').textContent = muted ? 'MUTED' : 'VICE FM 98.5';
+  drawMinimap();
+}
+
+// ---- menus / save / load --------------------------------------------------
+function showTitle() {
+  mode = 'title';
+  $('title-screen').style.display = 'flex';
+  $('pause-menu').style.display = 'none';
+  $('hud').style.display = 'none';
+  $('btn-continue').style.display = localStorage.getItem(SAVE_KEY) ? 'block' : 'none';
+}
+
+function startGame() {
+  mode = 'playing';
+  $('title-screen').style.display = 'none';
+  $('pause-menu').style.display = 'none';
+  $('hud').style.display = 'block';
+  snapCamera();
+}
+
+function togglePause() {
+  if (mode === 'playing') {
+    mode = 'paused';
+    $('pause-menu').style.display = 'flex';
+  } else if (mode === 'paused') {
+    mode = 'playing';
+    $('pause-menu').style.display = 'none';
+  }
+}
+
+function saveGame() {
+  const data = { x: player.x, z: player.z, money: player.money, health: player.health, clockMin };
+  localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+  return true;
+}
+
+function loadGame() {
+  const raw = localStorage.getItem(SAVE_KEY);
+  if (!raw) return false;
+  try {
+    const d = JSON.parse(raw);
+    player.x = d.x;
+    player.z = d.z;
+    player.money = d.money;
+    player.health = d.health;
+    clockMin = d.clockMin;
+    player.y = 0;
+    player.vy = 0;
+    player.grounded = true;
+    snapCamera();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+$('btn-start').addEventListener('click', startGame);
+$('btn-continue').addEventListener('click', () => {
+  loadGame();
+  startGame();
+});
+$('btn-resume').addEventListener('click', togglePause);
+$('btn-save').addEventListener('click', saveGame);
+$('btn-load').addEventListener('click', loadGame);
+$('btn-restart').addEventListener('click', () => {
+  player.x = 0;
+  player.z = 24;
+  player.y = 0;
+  player.vy = 0;
+  player.heading = Math.PI;
+  player.money = 250;
+  player.health = 100;
+  player.wanted = 0;
+  clockMin = 18 * 60 + 42;
+  camYaw = 0;
+  camPitch = 0.32;
+  snapCamera();
+  togglePause();
+});
+$('btn-mute').addEventListener('click', () => {
+  muted = !muted;
+});
+$('btn-quit').addEventListener('click', showTitle);
+
+// ---- shot staging ---------------------------------------------------------
+const SHOTS = {
+  onfoot: { x: 0, z: -40, heading: Math.PI, yaw: 0, pitch: 0.28, dist: 7 },
+  city: { x: 0, z: 0, heading: Math.PI, yaw: 0, pitch: 1.05, dist: 150 },
+  beach: { x: -40, z: 190, heading: 0, yaw: Math.PI, pitch: 0.3, dist: 7 },
+  plaza: { x: 0, z: 18, heading: Math.PI, yaw: 0, pitch: 0.3, dist: 7 },
+};
+let shotFrames = 0;
+if (STAGED) {
+  const s = SHOTS[SHOT] || SHOTS.onfoot;
+  player.x = s.x;
+  player.z = s.z;
+  player.heading = s.heading;
+  camYaw = s.yaw;
+  camPitch = s.pitch;
+  camDist = s.dist;
+  mode = 'playing';
+  $('title-screen').style.display = 'none';
+  $('hud').style.display = 'block';
+  snapCamera();
+} else {
+  showTitle();
+}
+
+// ---- test hooks -----------------------------------------------------------
+window.__vb = {
+  get mode() { return mode; },
+  player,
+  get money() { return player.money; },
+  get health() { return player.health; },
+  get wanted() { return player.wanted; },
+  get clockMin() { return clockMin; },
+  get district() { return districtAt(player.x, player.z); },
+  buildingCount: city.buildingCount,
+  colliderCount: city.colliders.length,
+  start: startGame,
+  teleport(x, z) {
+    player.x = x;
+    player.z = z;
+    snapCamera();
+  },
+  setWanted(n) {
+    player.wanted = clamp(n, 0, 5);
+  },
+  save: saveGame,
+  load: loadGame,
+  camera,
+  version: 'stage1-final',
+};
+
+// ---- main loop ------------------------------------------------------------
+let lastNow = performance.now();
+let fpsEMA = 0;
+let frames = 0;
+
+function frame(now) {
+  requestAnimationFrame(frame);
+  let dt = (now - lastNow) / 1000;
+  lastNow = now;
+  dt = clamp(dt, 0, 0.05); // never negative, never a huge step
+  frames++;
+
+  if (mode === 'title') {
+    // Slow orbit over the city.
+    titleYaw += dt * 0.05;
+    camera.position.set(Math.sin(titleYaw) * 130, 65, Math.cos(titleYaw) * 130);
+    camera.lookAt(0, 10, 0);
+  } else if (mode === 'playing') {
+    // --- movement (camera-relative) ---
+    const fwdX = -Math.sin(camYaw);
+    const fwdZ = -Math.cos(camYaw);
+    const rightX = -fwdZ;
+    const rightZ = fwdX;
+    let mx = 0;
+    let mz = 0;
+    if (keys.KeyW || keys.ArrowUp) { mx += fwdX; mz += fwdZ; }
+    if (keys.KeyS || keys.ArrowDown) { mx -= fwdX; mz -= fwdZ; }
+    if (keys.KeyD || keys.ArrowRight) { mx += rightX; mz += rightZ; }
+    if (keys.KeyA || keys.ArrowLeft) { mx -= rightX; mz -= rightZ; }
+    const mLen = Math.hypot(mx, mz);
+    const moving = mLen > 0.01;
+    const running = !!(keys.ShiftLeft || keys.ShiftRight);
+    const targetSpeed = moving ? (running ? RUN_SPEED : WALK_SPEED) : 0;
+    player.speed = damp(player.speed, targetSpeed, 10, dt);
+    if (moving) {
+      const nx = mx / mLen;
+      const nz = mz / mLen;
+      const targetHeading = Math.atan2(nx, nz);
+      player.heading = dampAngle(player.heading, targetHeading, 12, dt);
+      player.x += nx * player.speed * dt;
+      player.z += nz * player.speed * dt;
+      player.phase += player.speed * dt * 1.7;
+      player.idleTime = 0;
+    } else {
+      player.idleTime += dt;
+    }
+    // --- jump / gravity ---
+    if (jumpQueued) {
+      jumpQueued = false;
+      if (player.grounded) {
+        player.vy = JUMP_VEL;
+        player.grounded = false;
+      }
+    }
+    if (!player.grounded) {
+      player.vy -= GRAVITY * dt;
+      player.y += player.vy * dt;
+      if (player.y <= 0) {
+        player.y = 0;
+        player.vy = 0;
+        player.grounded = true;
+      }
+    }
+    // --- collision + bounds ---
+    const [rx, rz] = resolveCollisions(player.x, player.z, PLAYER_RADIUS, city.colliders);
+    player.x = clamp(rx, -WORLD + 4, WORLD - 4);
+    player.z = clamp(rz, -WORLD + 4, WORLD - 4);
+    // --- character ---
+    charGroup.position.set(player.x, player.y, player.z);
+    charGroup.rotation.y = player.heading;
+    const speedNorm = clamp(player.speed / RUN_SPEED, 0, 1);
+    pose(player.phase, speedNorm, !player.grounded, player.idleTime);
+    // --- camera (smooth follow) ---
+    const dh = Math.cos(camPitch) * camDist;
+    const h = Math.sin(camPitch) * camDist + 1.6;
+    const tx = player.x + Math.sin(camYaw) * dh;
+    const tz = player.z + Math.cos(camYaw) * dh;
+    camPos.x = damp(camPos.x, tx, 8, dt);
+    camPos.y = damp(camPos.y, h, 8, dt);
+    camPos.z = damp(camPos.z, tz, 8, dt);
+    camLook.x = damp(camLook.x, player.x + -Math.sin(camYaw) * 2, 10, dt);
+    camLook.y = damp(camLook.y, 1.6, 10, dt);
+    camLook.z = damp(camLook.z, player.z + -Math.cos(camYaw) * 2, 10, dt);
+    camera.position.copy(camPos);
+    camera.lookAt(camLook);
+    // --- fill light follows the camera (lights the character's back) ---
+    fill.position.set(camera.position.x, camera.position.y + 2, camera.position.z);
+    fill.target.position.set(player.x, 1.2, player.z);
+    // --- clock (1 min per 10 s) + sea ---
+    clockMin += dt / 10;
+    city.seaTex.offset.y += dt * 0.02;
+    updateHUD(dt);
+    // --- staged shot ready ---
+    if (STAGED) {
+      shotFrames++;
+      if (shotFrames >= 6) window.__shotReady = true;
+    }
+  }
+
+  // FPS meter (EMA over the last frames).
+  if (dt > 0) fpsEMA = fpsEMA === 0 ? 1 / dt : lerp(fpsEMA, 1 / dt, 0.05);
+  if (frames % 30 === 0) {
+    const el = $('hud-fps');
+    if (el) el.textContent = `${fpsEMA.toFixed(1)} FPS`;
+  }
+
+  renderer.render(scene, camera);
+  if (frames === 3) window.__gameReady = true;
+}
+
+requestAnimationFrame(frame);

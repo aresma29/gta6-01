@@ -1,46 +1,29 @@
-// VICE BAY — a gta6-01 entry (Node 22, standard library only). The game is
-// this directory's game/ folder: plain static files a desktop browser loads
-// offline (game/index.html and its ES modules, no library, no network
-// request). This program hands the entry in: it copies game/ and
-// screenshots/ from beside this file to /output and writes
-// /output/dossier.json, the summary the judge reads, with the vendored
-// make.fun library.
-//
-// VICE BAY is an original top-down open-world crime game: a coastal city to
-// explore on foot and by car, traffic and pedestrians, vehicle theft, a
-// police wanted system, five story missions, rivals to fight, and a full
-// HUD with a minimap. All characters, places, art and sound are original.
-//
-// Serve it locally with `node serve.ts`, then open http://localhost:8080.
-// Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
-//   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
+// main.ts — VICE BAY 3D dossier entrypoint (Node 22, stdlib only).
+// Copies game/ + screenshots/ to the output dir and writes dossier.json
+// via buildDossier (makefun/dossier/v1).
+// Run: node main.ts [outputDir]  (or set MAKEFUN_OUTPUT_DIR).
 
 import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
 
-const here = fileURLToPath(new URL('.', import.meta.url));
-const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+const repoRoot = dirname(fileURLToPath(import.meta.url));
+const outDir = process.env.MAKEFUN_OUTPUT_DIR || process.argv[2] || join(repoRoot, 'output');
 
-// The entry is the game folder plus its screenshots, nothing else.
-mkdirSync(out, { recursive: true });
-cpSync(join(here, 'game'), join(out, 'game'), { recursive: true });
-mkdirSync(join(out, 'screenshots'), { recursive: true });
-if (existsSync(join(here, 'screenshots'))) {
-  cpSync(join(here, 'screenshots'), join(out, 'screenshots'), { recursive: true });
+mkdirSync(outDir, { recursive: true });
+for (const name of ['game', 'screenshots']) {
+  const src = join(repoRoot, name);
+  if (existsSync(src)) cpSync(src, join(outDir, name), { recursive: true });
 }
 
-// The scorer's own caps: at most 4 screenshots, each at most 256 KiB;
-// at most 993 files and 48 MiB under game/; no game path over 1000 bytes.
-// The dossier carries the text budget the judge reads.
-writeFileSync(
-  join(out, 'dossier.json'),
-  buildDossier(out, {
-    text_max_bytes: 163840,
-    screenshots: { max: 4, max_bytes: 262144 },
-    game_max_files: 993,
-    game_max_bytes: 50331648,
-    game_path_max_bytes: 1000,
-  }),
-);
+const dossier = buildDossier(outDir, {
+  text_max_bytes: 163840,
+  screenshots: { max: 4, max_bytes: 262144 },
+  game_max_files: 993,
+  game_max_bytes: 50331648,
+});
+writeFileSync(join(outDir, 'dossier.json'), dossier);
+
+const parsed = JSON.parse(new TextDecoder().decode(dossier));
+console.log(`dossier.json: ${dossier.length} bytes, text ${parsed.text.length} bytes, ${parsed.images.length} images, schema ${parsed.schema}`);
