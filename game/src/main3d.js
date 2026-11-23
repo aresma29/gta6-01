@@ -8,6 +8,10 @@ import { clamp, lerp, damp, dampAngle, resolveCollisions } from './util.js';
 import { buildCity, districtAt, WORLD } from './city.js';
 import { buildCharacter } from './character.js';
 import { createVehicles } from './vehicles.js';
+import { createPolice } from './police.js';
+import { createNPCs } from './npcs.js';
+import { createCombat } from './combat.js';
+import { buildLandmarks } from './landmarks.js';
 
 const SAVE_KEY = 'vicebay-save-final';
 const WALK_SPEED = 5;
@@ -57,8 +61,13 @@ scene.add(fill.target);
 // ---- city + character -----------------------------------------------------
 const city = buildCity(scene);
 const vehicles = createVehicles(scene, { colliders: city.colliders });
-const { group: charGroup, pose } = buildCharacter();
+const { group: charGroup, parts: charParts, pose } = buildCharacter();
 scene.add(charGroup);
+
+// ---- Stage 3: police, NPCs, landmarks (combat is bound after `player`) --
+const police = createPolice(scene, { colliders: city.colliders, buildings: city.buildings, vehicles });
+const npcs = createNPCs(scene, { colliders: city.colliders });
+const landmarks = buildLandmarks(scene, city.landmarks);
 
 // ---- player state ---------------------------------------------------------
 const player = {
@@ -70,6 +79,10 @@ let mode = 'title'; // 'title' | 'playing' | 'paused'
 let muted = false;
 let jumpQueued = false;
 let titleYaw = 0;
+let wastedT = 0; // WASTED banner countdown (game seconds)
+
+// ---- Stage 3: combat (needs the `player` object + character parts) --------
+const combat = createCombat(scene, { parts: charParts, npcs, police, player });
 
 // ---- camera ---------------------------------------------------------------
 let camYaw = 0;
@@ -113,7 +126,7 @@ function tryEnterExitCar() {
   const car = vehicles.nearest(player.x, player.z);
   if (!car) return;
   vehicles.enter(car);
-  if (!car.owned) player.wanted = Math.max(1, player.wanted);
+  if (!car.owned) police.addHeat(20, 'theft', 0); // car theft: +1 star
   player.x = car.x;
   player.z = car.z;
   player.heading = car.heading;
@@ -133,6 +146,8 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyP' || e.code === 'Escape') togglePause();
   if (e.code === 'KeyM') muted = !muted;
   if (e.code === 'KeyE' && mode === 'playing') tryEnterExitCar();
+  if (e.code === 'KeyF' && mode === 'playing' && !vehicles.driving) combat.useWeapon();
+  if (e.code === 'KeyQ' && mode === 'playing' && !vehicles.driving) combat.cycleWeapon();
   if (e.code === 'Enter' && mode === 'title') startGame();
 });
 addEventListener('keyup', (e) => {
@@ -214,6 +229,26 @@ function drawMinimap() {
   mm.beginPath();
   mm.arc(px(0), px(0), 6, 0, Math.PI * 2);
   mm.fill();
+  // NPCs (pale dots), police cars (blue), helicopter (white).
+  mm.fillStyle = '#c9c9d8';
+  for (const n of npcs.list) {
+    mm.beginPath();
+    mm.arc(px(n.x), px(n.z), 1.6, 0, Math.PI * 2);
+    mm.fill();
+  }
+  mm.fillStyle = '#4a8aff';
+  for (const c of police.list) {
+    mm.beginPath();
+    mm.arc(px(c.x), px(c.z), 2.4, 0, Math.PI * 2);
+    mm.fill();
+  }
+  const hp = police.heliPos;
+  if (hp) {
+    mm.fillStyle = '#ffffff';
+    mm.beginPath();
+    mm.arc(px(hp.x), px(hp.z), 3, 0, Math.PI * 2);
+    mm.fill();
+  }
   // Player arrow (gold, rotated to heading).
   mm.save();
   mm.translate(px(player.x), px(player.z));
@@ -248,6 +283,37 @@ function updateHUD(dt) {
   $('hud-district').textContent = districtAt(player.x, player.z);
   $('hud-clock').textContent = fmtClock();
   $('hud-radio').textContent = muted ? 'MUTED' : 'VICE FM 98.5';
+  // Live dispatch board (named units + roles + distances + AIR 1).
+  $('hud-dispatch').innerHTML = `<b>VBPD DISPATCH</b><br>${police.getDispatch(player)}`;
+  // Weapon slots (active one gold + bold; SMG stays locked).
+  const w = combat.weapon;
+  for (const [id, name] of [['hud-w-fists', 'FISTS'], ['hud-w-bat', 'BAT'], ['hud-w-pistol', 'PISTOL']]) {
+    const el = $(id);
+    if (el) {
+      el.style.color = name === w ? '#ffd24a' : '#9a9ab0';
+      el.style.fontWeight = name === w ? 'bold' : 'normal';
+    }
+  }
+  // Car condition row (red when damaged), shown only while driving.
+  const carRow = $('hud-car');
+  if (carRow) {
+    const car = vehicles.driving;
+    if (car) {
+      const cond = Math.round((1 - car.damage) * 100);
+      carRow.style.display = 'block';
+      carRow.textContent = `${car.name} · ${cond}%`;
+      carRow.style.color = cond < 45 ? '#ff5a5a' : '#f2ead8';
+    } else {
+      carRow.style.display = 'none';
+    }
+  }
+  // Rico's warning when the heat is on.
+  const dlg = $('hud-dialogue');
+  if (dlg) {
+    dlg.innerHTML = player.wanted >= 3
+      ? '<b>Rico — Fixer:</b> The cops are all over you, Jax. Lose them — fast.'
+      : '<b>Rico — Fixer:</b> Vice Bay is yours, Jax. Walk it, learn it. The work comes later.';
+  }
   drawMinimap();
 }
 
@@ -312,6 +378,7 @@ function loadGame() {
         charGroup.visible = true;
       }
     }
+    police.reset(); // a loaded save starts clean (no stale pursuit)
     snapCamera();
     return true;
   } catch {
@@ -329,6 +396,9 @@ $('btn-save').addEventListener('click', saveGame);
 $('btn-load').addEventListener('click', loadGame);
 $('btn-restart').addEventListener('click', () => {
   vehicles.reset();
+  police.reset();
+  npcs.reset();
+  combat.reset();
   charGroup.visible = true;
   player.x = 0;
   player.z = 24;
@@ -354,6 +424,7 @@ $('btn-quit').addEventListener('click', showTitle);
 const SHOTS = {
   onfoot: { x: 0, z: -40, heading: Math.PI, yaw: 0, pitch: 0.28, dist: 7 },
   drive: { x: 0, z: 40, heading: Math.PI, yaw: 0, pitch: 0.3, dist: 9, inCar: true },
+  chase: { x: 0, z: 0, heading: 0, yaw: 0, pitch: 0.3, dist: 9, chase: true },
   city: { x: 0, z: 0, heading: Math.PI, yaw: 0, pitch: 1.05, dist: 150 },
   beach: { x: -40, z: 190, heading: 0, yaw: Math.PI, pitch: 0.3, dist: 7 },
 };
@@ -380,6 +451,21 @@ if (STAGED) {
       charGroup.visible = false;
     }
   }
+  if (s.chase) {
+    // Hero chase: Sunset GT on the central road facing south at speed,
+    // wanted 4, two lead police cars + one behind, helicopter above-ahead.
+    const gt = vehicles.cars.find((c) => c.id === 'sunset');
+    gt.x = 0; gt.z = 0; gt.heading = 0; gt.speed = 22;
+    gt.group.position.set(0, 0, 0);
+    gt.group.rotation.y = 0;
+    vehicles.enter(gt);
+    player.x = 0; player.z = 0; player.heading = 0; player.speed = 22;
+    charGroup.visible = false;
+    camDist = 9.5;
+    camPitch = 0.35;
+    police.stageChase(player);
+    snapCamera();
+  }
 } else {
   showTitle();
 }
@@ -403,7 +489,12 @@ window.__vb = {
     snapCamera();
   },
   setWanted(n) {
-    player.wanted = clamp(n, 0, 5);
+    police.setWanted(n);
+    player.wanted = police.wanted;
+  },
+  setCarDamage(v) {
+    const c = vehicles.driving;
+    if (c) c.damage = clamp(v, 0, 1);
   },
   get inCar() { return !!vehicles.driving; },
   get car() {
@@ -411,11 +502,18 @@ window.__vb = {
     return c ? { id: c.id, x: c.x, z: c.z, heading: c.heading, speed: c.speed, damage: c.damage, owned: c.owned } : null;
   },
   vehicles,
+  police,
+  npcs,
+  combat,
   get traffic() { return vehicles.traffic.map((t) => ({ id: t.id, x: t.x, z: t.z, heading: t.heading, speed: t.speed })); },
+  get policeCars() { return police.list; },
+  get heli() { return police.heliPos; },
+  get heliActive() { return police.heliActive; },
+  get weapon() { return combat.weapon; },
   save: saveGame,
   load: loadGame,
   camera,
-  version: 'stage2-final',
+  version: 'stage3-final',
 };
 
 // ---- main loop ------------------------------------------------------------
@@ -439,6 +537,7 @@ function frame(now) {
     if (vehicles.driving) {
       // --- driving (Stage 2) ---
       if (STAGED && SHOT === 'drive') keys.KeyW = true; // auto-drive for the shot
+      if (STAGED && SHOT === 'chase') keys.KeyW = true; // auto-drive for the chase shot
       vehicles.update(dt, keys);
       const car = vehicles.driving;
       player.x = car.x;
@@ -446,10 +545,13 @@ function frame(now) {
       player.heading = car.heading;
       player.speed = car.speed;
       charGroup.visible = false;
-      // Chase camera: swing behind the car.
+      // Chase camera: swing behind the car. Lift it when the helicopter is
+      // active so the helicopter stays in frame.
+      const liftDist = police.heliActive ? 10.5 : 9.5;
+      const liftPitch = police.heliActive ? 0.45 : 0.35;
       camYaw = dampAngle(camYaw, car.heading + Math.PI, 3, dt);
-      camDist = damp(camDist, 9.5, 3, dt);
-      camPitch = damp(camPitch, 0.35, 3, dt);
+      camDist = damp(camDist, liftDist, 3, dt);
+      camPitch = damp(camPitch, liftPitch, 3, dt);
       vehicles.updateLighting(clockMin);
     } else {
     // --- movement (camera-relative) ---
@@ -506,9 +608,38 @@ function frame(now) {
     charGroup.rotation.y = player.heading;
     const speedNorm = clamp(player.speed / RUN_SPEED, 0, 1);
     pose(player.phase, speedNorm, !player.grounded, player.idleTime);
+    combat.update(dt); // punch swing overrides the arm pose while active
       charGroup.visible = true;
       vehicles.update(dt, keys); // traffic keeps moving while on foot
       vehicles.updateLighting(clockMin);
+    }
+    // --- Stage 3: police pursuit, NPCs, landmarks ---
+    police.update(dt, player);
+    npcs.update(dt, player, police, vehicles);
+    landmarks.update(dt);
+    // --- wasted: respawn at the Hospital ---
+    if (player.health <= 0) {
+      if (vehicles.driving) tryEnterExitCar();
+      police.setWanted(0);
+      player.wanted = 0;
+      player.health = 100;
+      player.x = -64;
+      player.z = -32;
+      player.y = 0;
+      player.vy = 0;
+      player.grounded = true;
+      charGroup.visible = true;
+      wastedT = 2;
+      const wb = $('hud-wasted');
+      if (wb) wb.style.display = 'flex';
+      snapCamera();
+    }
+    if (wastedT > 0) {
+      wastedT -= dt;
+      if (wastedT <= 0) {
+        const wb = $('hud-wasted');
+        if (wb) wb.style.display = 'none';
+      }
     }
     // --- camera (smooth follow) ---
     const dh = Math.cos(camPitch) * camDist;
@@ -521,6 +652,11 @@ function frame(now) {
     camLook.x = damp(camLook.x, player.x + -Math.sin(camYaw) * 2, 10, dt);
     camLook.y = damp(camLook.y, 1.6, 10, dt);
     camLook.z = damp(camLook.z, player.z + -Math.cos(camYaw) * 2, 10, dt);
+    // Camera shake on police rams.
+    if (police.shake > 0) {
+      camPos.x += (Math.random() - 0.5) * police.shake * 0.6;
+      camPos.y += (Math.random() - 0.5) * police.shake * 0.4;
+    }
     camera.position.copy(camPos);
     camera.lookAt(camLook);
     // --- fill light follows the camera (lights the character's back) ---
