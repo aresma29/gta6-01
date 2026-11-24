@@ -38,21 +38,22 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 document.getElementById('game').appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0x7a4a58, 120, 620);
+scene.fog = new THREE.FogExp2(0x7a4a58, 0.0021); // built-in exp2 haze; density varies with the weather cycle
 const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 1500);
 
 // ---- dusk lighting --------------------------------------------------------
 const sun = new THREE.DirectionalLight(0xff9e3d, 2.6);
 sun.position.set(180, 55, 320); // low over the sea (south-east), long shadows
 sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
-sun.shadow.camera.left = -260;
-sun.shadow.camera.right = 260;
-sun.shadow.camera.top = 260;
-sun.shadow.camera.bottom = -260;
+sun.shadow.mapSize.set(1024, 1024); // modest (SwiftShader-safe); follows the player so the box stays tight
+sun.shadow.camera.left = -120;
+sun.shadow.camera.right = 120;
+sun.shadow.camera.top = 120;
+sun.shadow.camera.bottom = -120;
 sun.shadow.camera.far = 900;
 sun.shadow.bias = -0.0004;
 scene.add(sun);
+scene.add(sun.target); // target must be in the scene for the follow to move it
 scene.add(new THREE.HemisphereLight(0x9a6ab8, 0x3a2a30, 1.25));
 scene.add(new THREE.AmbientLight(0x6a4a58, 0.85));
 // Camera-side fill so the character is not a dark silhouette from behind.
@@ -77,6 +78,13 @@ const player = {
   grounded: true, phase: 0, idleTime: 0, money: 250, health: 100, wanted: 0,
 };
 let clockMin = 18 * 60 + 42; // 18:42
+// ---- weather cycle (slow, subtle) ------------------------------------------
+// 90 s game-time period: clear <-> haze. Drives the sky hue shift, the
+// FogExp2 density and the sun warmth. The swing is small on purpose — the
+// dusk look must stay recognizable and landmarks visible at every point.
+let weatherT = 0;
+const _sunWarm = new THREE.Color(0xff9e3d);
+const _sunDeep = new THREE.Color(0xff7a4a);
 let mode = 'title'; // 'title' | 'playing' | 'paused'
 let muted = false;
 let jumpQueued = false;
@@ -718,6 +726,15 @@ function frame(now) {
     // --- clock (1 min per 10 s) + sea ---
     clockMin += dt / 10;
     city.seaTex.offset.y += dt * 0.02;
+    // --- weather cycle: sun follows the player, fog + sky + sun drift ---
+    weatherT += dt;
+    const weatherPhase = 0.5 + 0.5 * Math.sin((weatherT * Math.PI * 2) / 90);
+    scene.fog.density = lerp(0.0016, 0.0026, weatherPhase);
+    sun.position.set(player.x + 180, 55, player.z + 320); // same low SE angle, recentered on the player
+    sun.target.position.set(player.x, 0, player.z);
+    sun.intensity = lerp(2.6, 2.3, weatherPhase);
+    sun.color.copy(_sunWarm).lerp(_sunDeep, weatherPhase * 0.6);
+    if (frames % 5 === 0) city.updateSky((weatherPhase - 0.5) * 0.07); // slow hue drift, dusk orange <-> deeper magenta
     updateHUD(dt);
     // --- staged shot ready ---
     if (STAGED) {

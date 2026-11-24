@@ -7,7 +7,7 @@ import * as THREE from 'three';
 import { mulberry32, rand, randInt, pick, makeBox } from './util.js';
 import {
   facadeTexture, signTexture, neonTexture, billboardTexture,
-  groundTexture, seaTexture, skyTexture,
+  groundTexture, seaTexture,
 } from './textures.js';
 
 export const ROADS = [-192, -128, -64, 0, 64, 128, 192];
@@ -49,11 +49,47 @@ export function buildCity(scene) {
   sea.position.set(0, 0.05, 240 + 130);
   scene.add(sea);
 
+  // ---- procedural sky dome (vertex-color gradient, no texture) ----------
+  // Same 5-stop dusk gradient as the old canvas sky (zenith purple ->
+  // magenta -> orange -> gold horizon). Vertex colors let the weather cycle
+  // shift the hue slowly without reloading any texture.
+  const SKY_STOPS = [
+    [0.0, 0x160f38], [0.35, 0x4a2566], [0.6, 0xb03a5a],
+    [0.8, 0xff6a25], [1.0, 0xffcf6a],
+  ].map(([t, hex]) => [t, new THREE.Color(hex)]);
+  const skyGeo = new THREE.SphereGeometry(700, 24, 32);
+  const skyPos = skyGeo.attributes.position;
+  const skyColors = new Float32Array(skyPos.count * 3);
+  skyGeo.setAttribute('color', new THREE.BufferAttribute(skyColors, 3));
   const sky = new THREE.Mesh(
-    new THREE.SphereGeometry(700, 24, 16),
-    new THREE.MeshBasicMaterial({ map: skyTexture(), side: THREE.BackSide, fog: false })
+    skyGeo,
+    new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false })
   );
   scene.add(sky);
+  const _skyC = new THREE.Color();
+  function skyColorAt(t, hueShift, out) {
+    // t: 0 = zenith (purple), 1 = horizon (gold).
+    let i = 0;
+    while (i < SKY_STOPS.length - 2 && t > SKY_STOPS[i + 1][0]) i++;
+    const [t0, c0] = SKY_STOPS[i];
+    const [t1, c1] = SKY_STOPS[i + 1];
+    const f = Math.min(1, Math.max(0, (t - t0) / (t1 - t0)));
+    out.copy(c0).lerp(c1, f);
+    if (hueShift) out.offsetHSL(hueShift, 0, 0);
+    return out;
+  }
+  function updateSky(hueShift) {
+    for (let v = 0; v < skyPos.count; v++) {
+      const y = skyPos.getY(v);
+      const t = Math.min(1, Math.max(0, 1 - y / 700));
+      skyColorAt(t, hueShift, _skyC);
+      skyColors[v * 3] = _skyC.r;
+      skyColors[v * 3 + 1] = _skyC.g;
+      skyColors[v * 3 + 2] = _skyC.b;
+    }
+    skyGeo.attributes.color.needsUpdate = true;
+  }
+  updateSky(0); // paint the base dusk gradient once at build
 
   // ---- shared facade variants (a few materials, reused) -----------------
   const facades = [];
@@ -353,5 +389,6 @@ export function buildCity(scene) {
     roads: ROADS,
     landmarks,
     tower,
+    updateSky,
   };
 }
